@@ -61,27 +61,23 @@ def preparar_dados_para_treino(df):
     df['texto_vaga'] = df[colunas_texto_vaga].apply(lambda x: ' '.join(x), axis=1)
     df['texto_candidato'] = df[colunas_texto_candidato].apply(lambda x: ' '.join(x), axis=1)
     
-    # --- CORREÇÃO E MELHORIA AQUI ---
-    # 1. Lista de palavras-chave para "sucesso", agora em minúsculas.
     positivos_keywords = ['contratado', 'feedback positivo', 'aprovado', 'contratada', 'aprovada']
     
-    # 2. Garante que a coluna 'status_final' seja string e minúscula para uma comparação robusta.
     df['status_final_lower'] = df['status_final'].astype(str).str.lower()
     
-    # 3. Cria o target se QUALQUER uma das palavras-chave estiver no status.
     df['target'] = df['status_final_lower'].apply(lambda x: 1 if any(keyword in x for keyword in positivos_keywords) else 0)
 
     df_modelo = df[df['status_final'] != 'N/A'].copy()
     
-    # 4. Mensagem de erro aprimorada com informações de debug.
-    if df_modelo['target'].nunique() < 2:
-        st.error("Falha Crítica no Treinamento: Não foi possível encontrar exemplos de 'sucesso' e 'fracasso' nos dados históricos.")
+    # --- MUDANÇA IMPORTANTE ---
+    # Se não for possível treinar, exibe o erro e retorna None em vez de parar o app.
+    if df_modelo.empty or df_modelo['target'].nunique() < 2:
+        st.error("Falha Crítica no Treinamento: Não foi possível encontrar dados de feedback histórico (sucesso/fracasso) para treinar o modelo de Machine Learning.")
         
         unique_feedbacks = df_modelo['status_final'].unique()
-        st.warning("A IA precisa aprender com o passado. Para isso, a coluna 'feedback' no arquivo `prospects.json` deve conter tanto exemplos de sucesso (ex: 'Contratado') quanto de fracasso.")
-        st.info(f"Valores de feedback encontrados nos seus dados: **{list(unique_feedbacks)}**")
-        st.info(f"Atualmente, a IA considera sucesso as palavras: **{positivos_keywords}**. Se os seus dados usam outras palavras para 'sucesso', a lista `positivos_keywords` no arquivo `ml_logic.py` precisa ser ajustada.")
-        st.stop()
+        st.warning("A IA precisa aprender com o passado. Para isso, a coluna 'feedback' no arquivo `prospects.json` deve conter exemplos de sucesso (ex: 'Contratado') e de fracasso.")
+        st.info(f"Valores de feedback encontrados (após filtrar 'N/A'): **{list(unique_feedbacks)}**")
+        return None # Retorna None para indicar falha no preparo
         
     return df_modelo[['texto_vaga', 'texto_candidato', 'target']]
 
@@ -91,19 +87,21 @@ def preparar_dados_para_treino(df):
 def treinar_modelo_matching():
     """
     Orquestra a preparação dos dados e o treinamento do modelo de ML.
-    Usa @st.cache_resource para que o modelo treinado seja mantido em cache.
+    Retorna o pipeline treinado ou None se o treinamento falhar.
     """
     df_mestre = criar_dataframe_mestre()
     df_treino = preparar_dados_para_treino(df_mestre)
     
+    # Se a preparação dos dados falhou, não continua.
+    if df_treino is None:
+        return None
+
     X = df_treino['texto_vaga'] + ' ' + df_treino['texto_candidato']
     y = df_treino['target']
 
-    # A estratificação pode falhar se houver muito poucos exemplos de uma classe.
     try:
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     except ValueError:
-        # Fallback se a estratificação não for possível (poucos dados)
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     pipeline = Pipeline([
