@@ -33,11 +33,9 @@ def criar_dataframe_mestre():
 
     df_applicants = pd.read_json(utils.NDJSON_FILENAME, lines=True)
 
-    # --- CORREÇÃO INSERIDA AQUI ---
     # Garante que as chaves de merge tenham o mesmo tipo de dado (string) para evitar erros.
     df_prospects['codigo_candidato'] = df_prospects['codigo_candidato'].astype(str)
     df_applicants['codigo_candidato'] = df_applicants['codigo_candidato'].astype(str)
-    # --- FIM DA CORREÇÃO ---
 
     # Merge para criar o DataFrame mestre
     df_mestre = pd.merge(df_prospects, df_vagas, on='codigo_vaga', how='left')
@@ -63,13 +61,26 @@ def preparar_dados_para_treino(df):
     df['texto_vaga'] = df[colunas_texto_vaga].apply(lambda x: ' '.join(x), axis=1)
     df['texto_candidato'] = df[colunas_texto_candidato].apply(lambda x: ' '.join(x), axis=1)
     
-    positivos = ['Contratado', 'Feedback Positivo', 'Aprovado', 'Contratada']
-    df['target'] = df['status_final'].apply(lambda x: 1 if x in positivos else 0)
+    # --- CORREÇÃO E MELHORIA AQUI ---
+    # 1. Lista de palavras-chave para "sucesso", agora em minúsculas.
+    positivos_keywords = ['contratado', 'feedback positivo', 'aprovado', 'contratada', 'aprovada']
+    
+    # 2. Garante que a coluna 'status_final' seja string e minúscula para uma comparação robusta.
+    df['status_final_lower'] = df['status_final'].astype(str).str.lower()
+    
+    # 3. Cria o target se QUALQUER uma das palavras-chave estiver no status.
+    df['target'] = df['status_final_lower'].apply(lambda x: 1 if any(keyword in x for keyword in positivos_keywords) else 0)
 
     df_modelo = df[df['status_final'] != 'N/A'].copy()
     
+    # 4. Mensagem de erro aprimorada com informações de debug.
     if df_modelo['target'].nunique() < 2:
-        st.error("Não foi possível criar uma variável alvo com duas classes (0 e 1). Verifique os valores na coluna 'feedback' do arquivo prospects.json. O treinamento não pode continuar.")
+        st.error("Falha Crítica no Treinamento: Não foi possível encontrar exemplos de 'sucesso' e 'fracasso' nos dados históricos.")
+        
+        unique_feedbacks = df_modelo['status_final'].unique()
+        st.warning("A IA precisa aprender com o passado. Para isso, a coluna 'feedback' no arquivo `prospects.json` deve conter tanto exemplos de sucesso (ex: 'Contratado') quanto de fracasso.")
+        st.info(f"Valores de feedback encontrados nos seus dados: **{list(unique_feedbacks)}**")
+        st.info(f"Atualmente, a IA considera sucesso as palavras: **{positivos_keywords}**. Se os seus dados usam outras palavras para 'sucesso', a lista `positivos_keywords` no arquivo `ml_logic.py` precisa ser ajustada.")
         st.stop()
         
     return df_modelo[['texto_vaga', 'texto_candidato', 'target']]
@@ -88,8 +99,13 @@ def treinar_modelo_matching():
     X = df_treino['texto_vaga'] + ' ' + df_treino['texto_candidato']
     y = df_treino['target']
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-    
+    # A estratificação pode falhar se houver muito poucos exemplos de uma classe.
+    try:
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    except ValueError:
+        # Fallback se a estratificação não for possível (poucos dados)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
     pipeline = Pipeline([
         ('tfidf', TfidfVectorizer(stop_words='english', max_features=3000, ngram_range=(1, 2))),
         ('clf', RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced'))
