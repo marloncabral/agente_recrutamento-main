@@ -6,8 +6,8 @@ import google.generativeai as genai
 import time
 
 # Importa as funções dos novos arquivos
-import utils.py
-import ml_logic.py
+import utils
+import ml_logic
 
 # --- Configuração da Página ---
 st.set_page_config(
