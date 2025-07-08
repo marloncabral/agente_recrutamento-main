@@ -3,3 +3,4 @@ pandas
 duckdb
 google-generativeai
 requests
+scikit-learn
