@@ -16,6 +16,11 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- ETAPA 1: GARANTIR QUE OS DADOS EXISTAM ---
+# Esta é a correção mais importante. A preparação dos dados deve ser a
+# primeira coisa a acontecer, antes de qualquer outra lógica.
+utils.preparar_dados_candidatos()
+
 # --- Funções dos Agentes de IA (Gemini) ---
 
 def analisar_competencias_vaga(competencias_texto, api_key):
@@ -41,16 +46,11 @@ def analisar_competencias_vaga(competencias_texto, api_key):
         return None
 
 def calcular_score_hibrido(candidato_texto, competencias_analisadas):
-    """
-    Calcula um score baseado na presença de palavras-chave.
-    CORRIGIDO: Agora verifica se o input é uma string antes de processar.
-    """
+    """Calcula um score baseado na presença de palavras-chave."""
     if not competencias_analisadas or not isinstance(candidato_texto, str):
-        return 0 # Retorna 0 se não houver competências ou se o texto do candidato for nulo/inválido.
-    
+        return 0
     score = 0
     candidato_texto_lower = candidato_texto.lower()
-    
     for comp, sinonimos in competencias_analisadas.get('sinonimos', {}).items():
         if comp.lower() in candidato_texto_lower: score += 10
         for s in sinonimos:
@@ -92,12 +92,10 @@ def gerar_analise_comparativa(vaga, relatorios, api_key):
     prompt = f"""
     Você é um Diretor de Recrutamento da **Decision**. Sua tarefa é criar um parecer final para apresentar ao seu cliente, a empresa **'{cliente}'**.
     Analise os relatórios de entrevista dos finalistas para a vaga de **{vaga.get('titulo_vaga', 'N/A')}**.
-
     **Relatórios dos Finalistas:**
     ---
     {relatorios}
     ---
-
     **Sua Tarefa:**
     1.  Crie um ranking dos candidatos, do mais recomendado para o menos.
     2.  Escreva um parecer final direcionado ao cliente ('{cliente}'), justificando por que você, como representante da Decision, recomenda a contratação do candidato ideal para a vaga deles. Enfatize como as habilidades e o perfil do candidato escolhido beneficiarão o cliente.
@@ -111,7 +109,7 @@ def gerar_analise_comparativa(vaga, relatorios, api_key):
         return f"Ocorreu um erro ao gerar a análise comparativa: {e}"
 
 # --- Interface Principal ---
-st.title("✨ Assistente de Recrutamento da Decision v2.1")
+st.title("✨ Assistente de Recrutamento da Decision v2.2")
 st.markdown("Bem-vindo ao assistente híbrido de IA: **Machine Learning** para matching e **IA Generativa** para entrevistas.")
 
 # --- Sidebar e Configurações ---
@@ -134,11 +132,8 @@ with st.sidebar:
         st.session_state.ml_mode_available = False
         st.warning("Fallback: Usando IA Generativa para o matching.")
 
-
-# --- Download e Preparação dos Dados Iniciais ---
-utils.preparar_dados_candidatos()
-
-# Carrega os dados principais para a UI
+# --- ETAPA 2: Carregar os dados para a UI ---
+# Agora que temos certeza que os arquivos existem, podemos carregá-los.
 df_vagas = utils.carregar_vagas()
 prospects_data = utils.carregar_prospects()
 
