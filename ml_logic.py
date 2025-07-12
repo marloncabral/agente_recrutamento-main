@@ -21,10 +21,12 @@ def criar_dataframe_mestre(vagas_data, prospects_data):
     lista_prospects = []
     for vaga_id, data in prospects_data.items():
         for prospect in data.get('prospects', []):
+            # --- CORREÇÃO PRINCIPAL AQUI ---
+            # O código agora lê a chave correta "situacao_candidado" em vez de "feedback".
             lista_prospects.append({
                 'codigo_vaga': vaga_id,
                 'codigo_candidato': prospect.get('codigo'),
-                'status_final': prospect.get('feedback', 'N/A') 
+                'status_final': prospect.get('situacao_candidado', 'N/A') 
             })
     df_prospects = pd.DataFrame(lista_prospects)
 
@@ -58,18 +60,23 @@ def preparar_dados_para_treino(df):
     df['texto_vaga'] = df[colunas_texto_vaga].apply(lambda x: ' '.join(x), axis=1)
     df['texto_candidato'] = df[colunas_texto_candidato].apply(lambda x: ' '.join(x), axis=1)
     
-    positivos_keywords = ['contratado', 'feedback positivo', 'aprovado', 'contratada', 'aprovada']
+    # --- CORREÇÃO E MELHORIA AQUI ---
+    # 1. Lista de palavras-chave para "sucesso", agora em minúsculas e ajustada aos seus dados.
+    positivos_keywords = ['contratado', 'aprovado', 'documentação']
     
+    # 2. Garante que a coluna 'status_final' seja string e minúscula para uma comparação robusta.
     df['status_final_lower'] = df['status_final'].astype(str).str.lower()
     
+    # 3. Cria o target se QUALQUER uma das palavras-chave estiver no status.
     df['target'] = df['status_final_lower'].apply(lambda x: 1 if any(keyword in x for keyword in positivos_keywords) else 0)
 
     df_modelo = df[df['status_final'] != 'N/A'].copy()
     
+    # 4. Mensagem de erro aprimorada com informações de debug.
     if df_modelo.empty or df_modelo['target'].nunique() < 2:
         st.error("Falha Crítica no Treinamento: Não foi possível encontrar dados de feedback histórico (sucesso/fracasso) para treinar o modelo de Machine Learning.")
         unique_feedbacks = df_modelo['status_final'].unique()
-        st.warning("A IA precisa aprender com o passado. Para isso, a coluna 'feedback' no arquivo `prospects.json` deve conter exemplos de sucesso (ex: 'Contratado') e de fracasso.")
+        st.warning("A IA precisa aprender com o passado. Para isso, a coluna 'situacao_candidado' no arquivo `prospects.json` deve conter exemplos de sucesso (ex: 'Contratado') e de fracasso.")
         st.info(f"Valores de feedback encontrados (após filtrar 'N/A'): **{list(unique_feedbacks)}**")
         return None
         
