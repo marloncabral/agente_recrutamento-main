@@ -21,6 +21,14 @@ st.set_page_config(
 # primeira coisa a acontecer, antes de qualquer outra lógica.
 utils.preparar_dados_candidatos()
 
+# --- ETAPA 2: Carregar os dados para a UI e Lógica ---
+# Carrega os dados UMA VEZ, logo após garantir que eles existem.
+# Estes dados serão usados tanto pela UI quanto passados para o treinamento.
+vagas_data_dict = utils.carregar_json(utils.VAGAS_FILENAME)
+prospects_data_dict = utils.carregar_prospects()
+df_vagas_ui = utils.carregar_vagas()
+
+
 # --- Funções dos Agentes de IA (Gemini) ---
 
 def analisar_competencias_vaga(competencias_texto, api_key):
@@ -119,7 +127,8 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("Motor de Machine Learning")
-    modelo_match = ml_logic.treinar_modelo_matching()
+    # Passa os dados carregados para a função de treinamento.
+    modelo_match = ml_logic.treinar_modelo_matching(vagas_data_dict, prospects_data_dict)
     
     if modelo_match:
         st.session_state.modelo_match = modelo_match
@@ -131,11 +140,6 @@ with st.sidebar:
     else:
         st.session_state.ml_mode_available = False
         st.warning("Fallback: Usando IA Generativa para o matching.")
-
-# --- ETAPA 2: Carregar os dados para a UI ---
-# Agora que temos certeza que os arquivos existem, podemos carregá-los.
-df_vagas = utils.carregar_vagas()
-prospects_data = utils.carregar_prospects()
 
 # Inicializa o session_state
 if 'candidatos_para_entrevista' not in st.session_state: st.session_state.candidatos_para_entrevista = []
@@ -153,13 +157,13 @@ with tab1:
         st.header("Matching com Machine Learning")
         st.info("O modelo de ML foi treinado com sucesso e está sendo usado para esta análise.")
         
-        opcoes_vagas_ml = {row['codigo_vaga']: f"{row['titulo_vaga']} (Cliente: {row['cliente']})" for _, row in df_vagas.iterrows()}
+        opcoes_vagas_ml = {row['codigo_vaga']: f"{row['titulo_vaga']} (Cliente: {row['cliente']})" for _, row in df_vagas_ui.iterrows()}
         codigo_vaga_selecionada = st.selectbox("Selecione a vaga para análise:", options=list(opcoes_vagas_ml.keys()), format_func=lambda x: opcoes_vagas_ml[x], key="ml_vaga_select")
 
         if st.button("Analisar Candidatos com Machine Learning", type="primary", key="ml_button"):
-            vaga_selecionada_data = df_vagas[df_vagas['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
+            vaga_selecionada_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
             texto_vaga_selecionada = vaga_selecionada_data['perfil_vaga_texto']
-            candidatos_prospect_ids = [p['codigo'] for p in prospects_data.get(codigo_vaga_selecionada, {}).get('prospects', [])]
+            candidatos_prospect_ids = [p['codigo'] for p in prospects_data_dict.get(codigo_vaga_selecionada, {}).get('prospects', [])]
 
             if not candidatos_prospect_ids:
                 st.warning("Nenhum candidato (prospect) encontrado para esta vaga no histórico.")
@@ -183,11 +187,11 @@ with tab1:
         if not google_api_key:
             st.error("Por favor, insira sua chave de API do Google na barra lateral para usar o modo de fallback.")
         else:
-            opcoes_vagas_gemini = {row['codigo_vaga']: f"{row['titulo_vaga']} (Cliente: {row['cliente']})" for _, row in df_vagas.iterrows()}
+            opcoes_vagas_gemini = {row['codigo_vaga']: f"{row['titulo_vaga']} (Cliente: {row['cliente']})" for _, row in df_vagas_ui.iterrows()}
             codigo_vaga_selecionada = st.selectbox("Selecione a vaga para análise:", options=list(opcoes_vagas_gemini.keys()), format_func=lambda x: opcoes_vagas_gemini[x], key="gemini_vaga_select")
 
             if st.button("Analisar Candidatos com IA Generativa", type="primary", key="gemini_button"):
-                vaga_selecionada_data = df_vagas[df_vagas['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
+                vaga_selecionada_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
                 competencias_texto = vaga_selecionada_data['perfil_vaga_texto']
                 
                 with st.spinner("Agente de IA está analisando as competências da vaga..."):
@@ -195,7 +199,7 @@ with tab1:
                 
                 if competencias_analisadas:
                     st.success("Competências analisadas pela IA!")
-                    candidatos_prospect_ids = [p['codigo'] for p in prospects_data.get(codigo_vaga_selecionada, {}).get('prospects', [])]
+                    candidatos_prospect_ids = [p['codigo'] for p in prospects_data_dict.get(codigo_vaga_selecionada, {}).get('prospects', [])]
                     
                     if candidatos_prospect_ids:
                         with st.spinner("Buscando e pontuando candidatos..."):
@@ -227,7 +231,7 @@ with tab1:
             if not selecionados_df.empty:
                 df_selecionados_completo = pd.merge(selecionados_df, st.session_state.df_analise_resultado, on=['nome', 'score'])
                 st.session_state.candidatos_para_entrevista = df_selecionados_completo.to_dict('records')
-                vaga_data = df_vagas[df_vagas['codigo_vaga'] == codigo_vaga_selecionada].iloc[0].to_dict()
+                vaga_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0].to_dict()
                 st.session_state.vaga_selecionada = vaga_data
                 st.session_state.relatorios_finais[codigo_vaga_selecionada] = {}
                 st.session_state.df_analise_resultado = pd.DataFrame()
