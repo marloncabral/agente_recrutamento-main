@@ -10,14 +10,11 @@ import utils # Importa as funções do seu arquivo utils.py
 
 # --- Funções de Preparação de Dados para ML ---
 
-def criar_dataframe_mestre():
+def criar_dataframe_mestre(vagas_data, prospects_data):
     """
-    Usa os dados brutos para criar um DataFrame mestre, unindo vagas,
-    prospects e candidatos para o treinamento.
+    Usa os dados brutos (passados como argumento) para criar um DataFrame mestre,
+    unindo vagas, prospects e candidatos para o treinamento.
     """
-    vagas_data = utils.carregar_json(utils.VAGAS_FILENAME)
-    prospects_data = utils.carregar_json(utils.PROSPECTS_FILENAME)
-    
     lista_vagas = [{'codigo_vaga': k, **v} for k, v in vagas_data.items()]
     df_vagas = pd.json_normalize(lista_vagas, sep='_')
 
@@ -69,30 +66,26 @@ def preparar_dados_para_treino(df):
 
     df_modelo = df[df['status_final'] != 'N/A'].copy()
     
-    # --- MUDANÇA IMPORTANTE ---
-    # Se não for possível treinar, exibe o erro e retorna None em vez de parar o app.
     if df_modelo.empty or df_modelo['target'].nunique() < 2:
         st.error("Falha Crítica no Treinamento: Não foi possível encontrar dados de feedback histórico (sucesso/fracasso) para treinar o modelo de Machine Learning.")
-        
         unique_feedbacks = df_modelo['status_final'].unique()
         st.warning("A IA precisa aprender com o passado. Para isso, a coluna 'feedback' no arquivo `prospects.json` deve conter exemplos de sucesso (ex: 'Contratado') e de fracasso.")
         st.info(f"Valores de feedback encontrados (após filtrar 'N/A'): **{list(unique_feedbacks)}**")
-        return None # Retorna None para indicar falha no preparo
+        return None
         
     return df_modelo[['texto_vaga', 'texto_candidato', 'target']]
 
 # --- Função de Treinamento ---
 
 @st.cache_resource(show_spinner="Treinando modelo de Machine Learning...")
-def treinar_modelo_matching():
+def treinar_modelo_matching(vagas_data, prospects_data):
     """
     Orquestra a preparação dos dados e o treinamento do modelo de ML.
-    Retorna o pipeline treinado ou None se o treinamento falhar.
+    Recebe os dados como argumentos para garantir a ordem de execução.
     """
-    df_mestre = criar_dataframe_mestre()
+    df_mestre = criar_dataframe_mestre(vagas_data, prospects_data)
     df_treino = preparar_dados_para_treino(df_mestre)
     
-    # Se a preparação dos dados falhou, não continua.
     if df_treino is None:
         return None
 
