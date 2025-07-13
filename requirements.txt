@@ -2,7 +2,9 @@ streamlit
 pandas
 scikit-learn
 google-generativeai
-shap
-matplotlib
 requests
 duckdb
+matplotlib
+shap==0.48.0
+numba==0.61.2
+llvmlite==0.44.0
