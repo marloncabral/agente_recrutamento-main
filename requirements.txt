@@ -1,8 +1,8 @@
 streamlit
 pandas
-duckdb
-google-generativeai
-requests
 scikit-learn
+google-generativeai
 shap
 matplotlib
+requests
+duckdb
