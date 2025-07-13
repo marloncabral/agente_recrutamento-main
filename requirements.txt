@@ -5,3 +5,4 @@ google-generativeai
 requests
 scikit-learn
 shap
+matplotlib
