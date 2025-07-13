@@ -40,9 +40,8 @@ def criar_dataframe_mestre_otimizado(vagas_data, prospects_data):
         st.error("Não foi possível buscar os detalhes dos candidatos necessários.")
         return pd.DataFrame()
 
-    # Renomeia a coluna 'nome' para evitar conflitos no merge, caso haja
+    # Renomeia a coluna 'nome' para evitar conflitos no merge
     df_applicants.rename(columns={'nome': 'nome_candidato'}, inplace=True)
-
 
     # 5. Merge final em dataframes muito menores
     df_prospects['codigo_candidato'] = df_prospects['codigo_candidato'].astype(str)
@@ -56,8 +55,18 @@ def criar_dataframe_mestre_otimizado(vagas_data, prospects_data):
 def preparar_dados_para_treino(df):
     """Prepara o DataFrame mestre para o treinamento do modelo."""
     
-    # Combina os textos de vaga e candidato
-    df['texto_vaga_combinado'] = df['perfil_vaga_texto'].fillna('').astype(str)
+    # --- INÍCIO DA CORREÇÃO ---
+    # Identifica dinamicamente todas as colunas que foram criadas a partir do 'perfil_vaga'
+    colunas_perfil_vaga = [col for col in df.columns if col.startswith('perfil_vaga_')]
+    
+    # Garante que todas essas colunas sejam texto e preenche valores nulos
+    for col in colunas_perfil_vaga:
+        df[col] = df[col].fillna('').astype(str)
+
+    # Combina todas as informações de perfil da vaga em uma única string de texto
+    df['texto_vaga_combinado'] = df[colunas_perfil_vaga].apply(lambda x: ' '.join(x), axis=1)
+    # --- FIM DA CORREÇÃO ---
+
     df['texto_candidato_combinado'] = df['candidato_texto_completo'].fillna('').astype(str)
     df['texto_completo'] = df['texto_vaga_combinado'] + ' ' + df['texto_candidato_combinado']
     
@@ -85,7 +94,7 @@ def treinar_modelo_matching(vagas_data, prospects_data):
     """
     Orquestra a preparação dos dados e o treinamento do modelo de ML.
     """
-    # Usa a nova função otimizada
+    # Usa a função otimizada
     df_mestre = criar_dataframe_mestre_otimizado(vagas_data, prospects_data)
     if df_mestre.empty:
         return None, None
