@@ -10,7 +10,6 @@ import duckdb
 from pathlib import Path
 
 # --- Constantes de Arquivos e URLs ---
-# Usando pathlib para uma melhor manipulação de caminhos
 DATA_DIR = Path("./data")
 APPLICANTS_JSON_URL = "https://huggingface.co/datasets/Postech7/datathon-fiap/resolve/main/applicants.json"
 VAGAS_JSON_URL = "https://huggingface.co/datasets/Postech7/datathon-fiap/resolve/main/vagas.json"
@@ -31,14 +30,12 @@ def baixar_arquivo_se_nao_existir(url, nome_arquivo, is_large=False):
     if os.path.exists(nome_arquivo):
         return True
 
-    # CORREÇÃO: f-string em uma única linha.
     st.info(f"Arquivo '{nome_arquivo.name}' não encontrado. Baixando do repositório...")
     try:
         with st.spinner(f"Baixando {nome_arquivo.name}... (Pode levar um momento)"):
             response = requests.get(url, stream=is_large)
             response.raise_for_status() # Lança um erro para códigos de status HTTP ruins (4xx ou 5xx)
             
-            # Garante que o diretório de dados exista
             DATA_DIR.mkdir(parents=True, exist_ok=True)
 
             with open(nome_arquivo, 'wb') as f:
@@ -47,11 +44,9 @@ def baixar_arquivo_se_nao_existir(url, nome_arquivo, is_large=False):
                         f.write(chunk)
                 else:
                     f.write(response.content)
-        # CORREÇÃO: f-string em uma única linha.
         st.success(f"Arquivo '{nome_arquivo.name}' baixado com sucesso!")
         return True
     except requests.exceptions.RequestException as e:
-        # CORREÇÃO: f-string em uma única linha.
         st.error(f"Erro ao baixar o arquivo '{nome_arquivo.name}': {e}. Verifique a URL e sua conexão.")
         return False
 
@@ -63,19 +58,15 @@ def preparar_dados_candidatos():
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    if not baixar_arquivo_se_nao_existir(VAGAS_JSON_URL, VAGAS_FILENAME):
-        return False
-    if not baixar_arquivo_se_nao_existir(PROSPECTS_JSON_URL, PROSPECTS_FILENAME):
-        return False
+    if not baixar_arquivo_se_nao_existir(VAGAS_JSON_URL, VAGAS_FILENAME): return False
+    if not baixar_arquivo_se_nao_existir(PROSPECTS_JSON_URL, PROSPECTS_FILENAME): return False
 
-    if os.path.exists(NDJSON_FILENAME):
-        return True
+    if os.path.exists(NDJSON_FILENAME): return True
 
     if not baixar_arquivo_se_nao_existir(APPLICANTS_JSON_URL, RAW_APPLICANTS_FILENAME, is_large=True):
         st.error("Não foi possível baixar o arquivo principal de candidatos. As funcionalidades de análise de candidatos estarão desabilitadas.")
         return False
 
-    # CORREÇÃO: f-string em uma única linha.
     st.info(f"Primeiro uso: Convertendo '{RAW_APPLICANTS_FILENAME.name}' para um formato otimizado...")
     with st.spinner("Isso pode levar um momento, mas só acontecerá uma vez."):
         try:
@@ -109,7 +100,6 @@ def carregar_json(caminho_arquivo):
         st.error(f"Arquivo não encontrado: {caminho_arquivo}")
         return None
     except json.JSONDecodeError as e:
-        # CORREÇÃO: f-string em uma única linha.
         st.error(f"Erro ao decodificar o JSON do arquivo '{caminho_arquivo}': {e}")
         return None
 
@@ -117,8 +107,7 @@ def carregar_json(caminho_arquivo):
 def carregar_vagas():
     """Carrega e padroniza os dados das vagas a partir do arquivo JSON local."""
     vagas_data = carregar_json(VAGAS_FILENAME)
-    if vagas_data is None:
-        return pd.DataFrame()
+    if vagas_data is None: return pd.DataFrame()
 
     vagas_lista = []
     for codigo, dados in vagas_data.items():
@@ -129,7 +118,7 @@ def carregar_vagas():
             'codigo_vaga': codigo,
             'titulo_vaga': info_basicas.get('titulo_vaga', 'N/A'),
             'cliente': info_basicas.get('cliente', 'N/A'),
-            'perfil_vaga_texto': json.dumps(perfil_vaga) 
+            'perfil_vaga_texto': json.dumps(perfil_vaga) # Converte o perfil para texto
         }
         vagas_lista.append(vaga_info)
     
@@ -142,8 +131,7 @@ def carregar_prospects():
 
 def buscar_detalhes_candidatos(codigos_candidatos):
     """Busca detalhes de uma lista de candidatos usando DuckDB para performance."""
-    if not codigos_candidatos:
-        return pd.DataFrame()
+    if not codigos_candidatos: return pd.DataFrame()
 
     codigos_str = ", ".join([f"'{c}'" for c in codigos_candidatos])
 
