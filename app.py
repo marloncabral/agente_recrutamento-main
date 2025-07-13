@@ -6,8 +6,8 @@ import re
 import json
 
 # Importa as funções dos novos arquivos
-import utils_v2 as utils
-import ml_logic_v2 as ml_logic
+import utils
+import ml_logic
 
 # --- Configuração da Página ---
 st.set_page_config(
