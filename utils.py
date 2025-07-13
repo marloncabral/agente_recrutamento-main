@@ -31,9 +31,8 @@ def baixar_arquivo_se_nao_existir(url, nome_arquivo, is_large=False):
     if os.path.exists(nome_arquivo):
         return True
 
-    st.info(f"Arquivo 
-'{nome_arquivo}'
- não encontrado. Baixando do repositório...")
+    # CORREÇÃO: f-string em uma única linha.
+    st.info(f"Arquivo '{nome_arquivo.name}' não encontrado. Baixando do repositório...")
     try:
         with st.spinner(f"Baixando {nome_arquivo.name}... (Pode levar um momento)"):
             response = requests.get(url, stream=is_large)
@@ -48,15 +47,12 @@ def baixar_arquivo_se_nao_existir(url, nome_arquivo, is_large=False):
                         f.write(chunk)
                 else:
                     f.write(response.content)
-        st.success(f"Arquivo 
-'{nome_arquivo}'
- baixado com sucesso!")
+        # CORREÇÃO: f-string em uma única linha.
+        st.success(f"Arquivo '{nome_arquivo.name}' baixado com sucesso!")
         return True
     except requests.exceptions.RequestException as e:
-        st.error(f"Erro ao baixar o arquivo 
-'{nome_arquivo}'
-: {e}. Verifique a URL e sua conexão.")
-        # Não usar st.stop() para permitir que a aplicação continue, se possível
+        # CORREÇÃO: f-string em uma única linha.
+        st.error(f"Erro ao baixar o arquivo '{nome_arquivo.name}': {e}. Verifique a URL e sua conexão.")
         return False
 
 def preparar_dados_candidatos():
@@ -65,28 +61,22 @@ def preparar_dados_candidatos():
     convertendo o 'applicants.json' para o formato otimizado NDJSON na primeira vez.
     Retorna True se todos os dados estiverem prontos, False caso contrário.
     """
-    # Garante que o diretório de dados exista
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Garante que os arquivos menores (vagas, prospects) existam.
     if not baixar_arquivo_se_nao_existir(VAGAS_JSON_URL, VAGAS_FILENAME):
         return False
     if not baixar_arquivo_se_nao_existir(PROSPECTS_JSON_URL, PROSPECTS_FILENAME):
         return False
 
-    # Se o arquivo otimizado já existe, está tudo pronto.
     if os.path.exists(NDJSON_FILENAME):
         return True
 
-    # Baixa o arquivo original grande se necessário
     if not baixar_arquivo_se_nao_existir(APPLICANTS_JSON_URL, RAW_APPLICANTS_FILENAME, is_large=True):
         st.error("Não foi possível baixar o arquivo principal de candidatos. As funcionalidades de análise de candidatos estarão desabilitadas.")
         return False
 
-    # Converte o JSON original para NDJSON para otimizar a leitura
-    st.info(f"Primeiro uso: Convertendo 
-'{RAW_APPLICANTS_FILENAME.name}'
- para um formato otimizado...")
+    # CORREÇÃO: f-string em uma única linha.
+    st.info(f"Primeiro uso: Convertendo '{RAW_APPLICANTS_FILENAME.name}' para um formato otimizado...")
     with st.spinner("Isso pode levar um momento, mas só acontecerá uma vez."):
         try:
             with open(RAW_APPLICANTS_FILENAME, 'r', encoding='utf-8') as f_in:
@@ -96,8 +86,7 @@ def preparar_dados_candidatos():
                 for codigo, candidato_data in data.items():
                     candidato_data['codigo_candidato'] = codigo
                     json.dump(candidato_data, f_out)
-                    f_out.write('
-')
+                    f_out.write('\n')
             st.success("Arquivo de dados otimizado com sucesso!")
             time.sleep(2)
             return True
@@ -120,9 +109,8 @@ def carregar_json(caminho_arquivo):
         st.error(f"Arquivo não encontrado: {caminho_arquivo}")
         return None
     except json.JSONDecodeError as e:
-        st.error(f"Erro ao decodificar o JSON do arquivo 
-'{caminho_arquivo}'
-: {e}")
+        # CORREÇÃO: f-string em uma única linha.
+        st.error(f"Erro ao decodificar o JSON do arquivo '{caminho_arquivo}': {e}")
         return None
 
 @st.cache_data
@@ -134,7 +122,6 @@ def carregar_vagas():
 
     vagas_lista = []
     for codigo, dados in vagas_data.items():
-        # Extração segura de dados aninhados
         info_basicas = dados.get('informacoes_basicas', {})
         perfil_vaga = dados.get('perfil_vaga', {})
         
@@ -142,7 +129,6 @@ def carregar_vagas():
             'codigo_vaga': codigo,
             'titulo_vaga': info_basicas.get('titulo_vaga', 'N/A'),
             'cliente': info_basicas.get('cliente', 'N/A'),
-            # Converte o perfil para uma string de texto para análise
             'perfil_vaga_texto': json.dumps(perfil_vaga) 
         }
         vagas_lista.append(vaga_info)
@@ -159,10 +145,8 @@ def buscar_detalhes_candidatos(codigos_candidatos):
     if not codigos_candidatos:
         return pd.DataFrame()
 
-    # Prepara a lista de códigos para a cláusula IN da query SQL
     codigos_str = ", ".join([f"'{c}'" for c in codigos_candidatos])
 
-    # Query otimizada para concatenar apenas campos existentes e não nulos
     query = f"""
     SELECT
         codigo_candidato,
@@ -181,7 +165,6 @@ def buscar_detalhes_candidatos(codigos_candidatos):
     WHERE codigo_candidato IN ({codigos_str})
     """
     try:
-        # Usando um banco de dados em memória para a consulta
         with duckdb.connect(database=':memory:', read_only=False) as con:
             return con.execute(query).fetchdf()
     except Exception as e:
