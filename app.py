@@ -19,7 +19,6 @@ st.set_page_config(
 )
 
 # --- Funções de IA Generativa ---
-# Nota: Para um projeto maior, estas funções poderiam ser movidas para um módulo próprio (ex: gemini_logic.py)
 def analisar_competencias_vaga(competencias_texto, api_key):
     if not api_key: return None
     try:
@@ -47,8 +46,9 @@ def calcular_score_hibrido(candidato_texto, competencias_analisadas):
     return score
 
 def gerar_relatorio_final(vaga, candidato, historico_chat, api_key):
+    # CORREÇÃO: Usar 'nome_candidato' que é o nome correto da coluna
     if not api_key: return "Erro: Chave de API do Google não configurada."
-    prompt = f"""Você é um especialista em recrutamento da Decision. Analise a transcrição de uma entrevista e gere um relatório final.\n**Vaga:** {vaga.get('titulo_vaga', 'N/A')}\n**Candidato:** {candidato.get('nome', 'N/A')}\n**Transcrição:**\n{historico_chat}\n**Sua Tarefa:** Gere um relatório estruturado em markdown com: ### Relatório Final de Entrevista, 1. Score Geral (0 a 10), 2. Pontos Fortes, 3. Pontos de Atenção, 4. Recomendação Final ("Fit Perfeito", "Recomendado com Ressalvas" ou "Não Recomendado")."""
+    prompt = f"""Você é um especialista em recrutamento da Decision. Analise a transcrição de uma entrevista e gere um relatório final.\n**Vaga:** {vaga.get('titulo_vaga', 'N/A')}\n**Candidato:** {candidato.get('nome_candidato', 'N/A')}\n**Transcrição:**\n{historico_chat}\n**Sua Tarefa:** Gere um relatório estruturado em markdown com: ### Relatório Final de Entrevista, 1. Score Geral (0 a 10), 2. Pontos Fortes, 3. Pontos de Atenção, 4. Recomendação Final ("Fit Perfeito", "Recomendado com Ressalvas" ou "Não Recomendado")."""
     try:
         genai.configure(api_key=api_key); model = genai.GenerativeModel('gemini-1.5-flash'); response = model.generate_content(prompt); return response.text
     except Exception as e: return f"Ocorreu um erro ao gerar o relatório: {e}"
@@ -86,7 +86,7 @@ with st.sidebar:
     
     if modelo_match:
         st.session_state.modelo_match = modelo_match
-        st.session_state.X_train_data = X_train_data # Salva os dados de treino para o SHAP
+        st.session_state.X_train_data = X_train_data 
         st.session_state.ml_mode_available = True
         if 'model_performance' in st.session_state:
              st.success(st.session_state.model_performance)
@@ -111,17 +111,20 @@ with tab1:
         codigo_vaga_selecionada = st.selectbox("Selecione a vaga para análise:", options=list(opcoes_vagas_ml.keys()), format_func=lambda x: opcoes_vagas_ml[x], key="ml_vaga_select")
 
         if st.button("Analisar Candidatos com Machine Learning", type="primary"):
-            vaga_selecionada_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
-            texto_vaga_selecionada = vaga_selecionada_data['perfil_vaga_texto']
-            candidatos_prospect_ids = [p['codigo'] for p in prospects_data_dict.get(codigo_vaga_selecionada, {}).get('prospects', [])]
+            with st.spinner("Analisando candidatos com o modelo de ML..."):
+                vaga_selecionada_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
+                texto_vaga_selecionada = vaga_selecionada_data['perfil_vaga_texto']
+                candidatos_prospect_ids = [p['codigo'] for p in prospects_data_dict.get(codigo_vaga_selecionada, {}).get('prospects', [])]
 
-            if not candidatos_prospect_ids:
-                st.warning("Nenhum candidato (prospect) encontrado para esta vaga no histórico.")
-            else:
-                with st.spinner("Analisando candidatos com o modelo de ML..."):
+                if not candidatos_prospect_ids:
+                    st.warning("Nenhum candidato (prospect) encontrado para esta vaga no histórico.")
+                else:
                     df_detalhes = utils.buscar_detalhes_candidatos(candidatos_prospect_ids)
                     if not df_detalhes.empty:
-                        # Prepara os dados para o formato que o modelo espera
+                        # Renomeia a coluna 'nome' para 'nome_candidato' para consistência
+                        if 'nome' in df_detalhes.columns:
+                            df_detalhes.rename(columns={'nome': 'nome_candidato'}, inplace=True)
+                        
                         df_detalhes['texto_completo'] = texto_vaga_selecionada + ' ' + df_detalhes['candidato_texto_completo']
                         
                         modelo = st.session_state.modelo_match
@@ -129,24 +132,30 @@ with tab1:
                         df_detalhes['score'] = (probabilidades[:, 1] * 100).astype(int)
                         
                         st.session_state.df_analise_resultado = df_detalhes.sort_values(by='score', ascending=False).head(20)
-    else: # Modo Fallback com IA Generativa
+    else: 
         st.header("Matching com IA Generativa (Modo de Fallback)")
-        # ... (código do modo fallback omitido para brevidade, pode ser colado da sua versão anterior)
+        # Lógica do modo fallback...
 
     if not st.session_state.df_analise_resultado.empty:
         st.subheader("Candidatos Recomendados")
-        df_para_editar = st.session_state.df_analise_resultado[['nome', 'score']].copy()
+        # --- CORREÇÃO PRINCIPAL AQUI ---
+        # Usar a coluna 'nome_candidato' em vez de 'nome'
+        df_para_editar = st.session_state.df_analise_resultado[['nome_candidato', 'score']].copy()
         df_para_editar['selecionar'] = False
         
         df_editado = st.data_editor(df_para_editar, column_config={
             "selecionar": st.column_config.CheckboxColumn("Selecionar p/ Entrevista", default=False),
+            "nome_candidato": st.column_config.TextColumn("Nome do Candidato"), # Exibe a coluna com o nome correto
             "score": st.column_config.ProgressColumn("Score de Match (%)", min_value=0, max_value=100)
         }, hide_index=True, use_container_width=True)
 
         if st.button("Confirmar Seleção para Entrevista"):
             selecionados_df = df_editado[df_editado['selecionar']]
             if not selecionados_df.empty:
-                df_selecionados_completo = pd.merge(selecionados_df, st.session_state.df_analise_resultado, on=['nome', 'score'])
+                # --- CORREÇÃO PRINCIPAL AQUI ---
+                # Fazer o merge usando 'nome_candidato'
+                df_selecionados_completo = pd.merge(selecionados_df, st.session_state.df_analise_resultado, on=['nome_candidato', 'score'])
+                
                 st.session_state.candidatos_para_entrevista = df_selecionados_completo.to_dict('records')
                 vaga_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0].to_dict()
                 st.session_state.vaga_selecionada = vaga_data
@@ -160,34 +169,31 @@ with tab1:
                 modelo = st.session_state.modelo_match
                 df_resultado = st.session_state.df_analise_resultado
 
-                # Extrai o pré-processador e o classificador do pipeline
                 preprocessor = modelo.named_steps['preprocessor']
                 classifier = modelo.named_steps['clf']
 
-                # Usa o SHAP TreeExplainer que é otimizado para modelos de árvore
                 explainer = shap.TreeExplainer(classifier)
                 
-                # Pega o melhor candidato como exemplo
                 melhor_candidato_dados = df_resultado.head(1)
-                nome_candidato = melhor_candidato_dados['nome'].iloc[0]
+                # --- CORREÇÃO PRINCIPAL AQUI ---
+                # Usar a coluna 'nome_candidato' para o título do gráfico
+                nome_candidato_shap = melhor_candidato_dados['nome_candidato'].iloc[0]
 
-                # Transforma os dados do melhor candidato usando o pré-processador treinado
                 dados_transformados = preprocessor.transform(melhor_candidato_dados[['texto_completo']])
                 
-                # Calcula os valores SHAP para a classe positiva (1)
                 shap_values = explainer.shap_values(dados_transformados)[1]
                 
-                st.write(f"Análise para **{nome_candidato}**:")
+                st.write(f"Análise para **{nome_candidato_shap}**:")
                 st.write("Principais palavras que influenciaram na pontuação (vermelho aumenta, azul diminui).")
                 
-                # Gera o gráfico SHAP
-                fig, ax = plt.subplots()
+                fig, ax = plt.subplots(figsize=(10, 2))
                 shap.force_plot(
                     explainer.expected_value[1], 
                     shap_values, 
                     feature_names=preprocessor.get_feature_names_out(),
                     matplotlib=True,
-                    show=False
+                    show=False,
+                    text_rotation=15
                 )
                 st.pyplot(fig, bbox_inches='tight')
                 plt.close(fig)
@@ -195,15 +201,15 @@ with tab1:
             except Exception as e:
                 st.warning(f"Não foi possível gerar a análise SHAP. Erro: {e}")
 
-# As abas 2 e 3 podem ser mantidas como na sua última versão, pois a lógica delas não depende diretamente das alterações de ML.
-# O código delas foi omitido aqui para focar nas melhorias implementadas.
+# As abas 2 e 3 podem ser mantidas como na sua última versão.
+# Apenas garanta que ao buscar o nome do candidato para exibição, você use a chave 'nome_candidato'.
+# Exemplo para a tab2:
+# nomes_candidatos = {c['codigo_candidato']: c['nome_candidato'] for c in st.session_state.candidatos_para_entrevista}
 
 with tab2:
     st.header("Agente 2: Condução das Entrevistas")
-    st.info("A lógica desta aba foi omitida para brevidade, mas pode ser colada da sua versão anterior.")
-    # Cole aqui a lógica da 'tab2' do seu app_v2.py
+    st.info("Lembre-se de ajustar a busca do nome do candidato para 'nome_candidato' nesta aba também.")
     
 with tab3:
     st.header("Agente 3: Análise Final Comparativa")
-    st.info("A lógica desta aba foi omitida para brevidade, mas pode ser colada da sua versão anterior.")
-    # Cole aqui a lógica da 'tab3' do seu app_v2.py
+    st.info("Lembre-se de ajustar a busca do nome do candidato para 'nome_candidato' nesta aba também.")
