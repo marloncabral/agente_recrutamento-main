@@ -2,16 +2,24 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 import time
+import joblib 
 
 import utils
-import ml_logic
 
+# --- FUNÇÃO PARA CARREGAR O MODELO PRÉ-TREINADO ---
+@st.cache_resource
+def carregar_modelo_treinado():
+    """Carrega o pipeline de ML a partir do arquivo .joblib."""
+    try:
+        modelo = joblib.load("modelo_recrutamento.joblib")
+        return modelo
+    except FileNotFoundError:
+        st.error("Arquivo 'modelo_recrutamento.joblib' não encontrado. Execute 'train.py' e envie o arquivo para o repositório.")
+        return None
+
+# --- Configuração da Página e Carregamento de Dados ---
 st.set_page_config(page_title="Decision - Assistente de Recrutamento IA", page_icon="✨", layout="wide")
 
-# Funções de IA Generativa (sem alterações)
-# ... (mantenha suas funções de IA Generativa aqui)
-
-# --- Inicialização e Carregamento de Dados ---
 if not utils.preparar_dados_candidatos():
     st.error("Falha na preparação dos dados. A aplicação será interrompida.")
     st.stop()
@@ -22,7 +30,7 @@ df_vagas_ui = utils.carregar_vagas()
 
 st.title("✨ Assistente de Recrutamento da Decision")
 
-# --- Sidebar e Treinamento do Modelo com Feedback por Etapas ---
+# --- Sidebar e CARREGAMENTO RÁPIDO do Modelo ---
 with st.sidebar:
     st.header("Configuração Essencial")
     google_api_key = st.text_input("Chave de API do Google Gemini", type="password")
@@ -31,41 +39,22 @@ with st.sidebar:
         
     st.markdown("---")
     st.header("Motor de Machine Learning")
-
-    if 'modelo_match' not in st.session_state:
-        try:
-            with st.spinner('Etapa 1 de 3: Preparando e limpando os dados...'):
-                df_treino = ml_logic.etapa_1_preparar_dados(vagas_data_dict, prospects_data_dict)
-            st.success("Etapa 1 de 3: Dados preparados!")
-
-            with st.spinner('Etapa 2 de 3: Treinando o modelo...'):
-                pipeline, X_test, y_test = ml_logic.etapa_2_treinar_modelo(df_treino)
-            st.success("Etapa 2 de 3: Modelo treinado!")
-            
-            with st.spinner('Etapa 3 de 3: Avaliando e finalizando...'):
-                performance_string = ml_logic.etapa_3_avaliar_e_finalizar(pipeline, X_test, y_test)
-            st.success("Etapa 3 de 3: Avaliação concluída!")
-
-            if pipeline:
-                st.session_state.modelo_match = pipeline
-                st.session_state.model_performance = performance_string
-                st.session_state.ml_mode_available = True
-            else:
-                st.session_state.ml_mode_available = False
-                st.error("Falha crítica no treinamento do modelo.")
-        except Exception as e:
-            st.error(f"Ocorreu um erro durante o treinamento: {e}")
-            st.session_state.ml_mode_available = False
     
-    if st.session_state.get('ml_mode_available', False):
-        st.info(st.session_state.get('model_performance', 'Modelo carregado.'))
+    with st.spinner("Carregando modelo de Machine Learning..."):
+        modelo_match = carregar_modelo_treinado()
+
+    if modelo_match:
+        st.session_state.modelo_match = modelo_match
+        st.session_state.ml_mode_available = True
+        st.success("Modelo de Matching carregado com sucesso!")
+    else:
+        st.session_state.ml_mode_available = False
+        st.error("Motor de ML indisponível.")
 
 # --- Inicialização do Session State ---
+if 'df_analise_resultado' not in st.session_state: st.session_state.df_analise_resultado = pd.DataFrame()
 if 'candidatos_para_entrevista' not in st.session_state: st.session_state.candidatos_para_entrevista = []
 if 'vaga_selecionada' not in st.session_state: st.session_state.vaga_selecionada = {}
-if 'df_analise_resultado' not in st.session_state: st.session_state.df_analise_resultado = pd.DataFrame()
-if "messages" not in st.session_state: st.session_state.messages = {}
-if "relatorios_finais" not in st.session_state: st.session_state.relatorios_finais = {}
 
 # --- Abas da Aplicação ---
 tab1, tab2, tab3 = st.tabs(["Agente 1: Matching de Candidatos", "Agente 2: Entrevistas", "Análise Final"])
@@ -88,13 +77,16 @@ with tab1:
                     if not df_detalhes.empty:
                         vaga_selecionada_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
                         perfil_vaga_texto = vaga_selecionada_data['perfil_vaga_texto']
-                        
+
                         if 'nome' in df_detalhes.columns:
                             df_detalhes.rename(columns={'nome': 'nome_candidato'}, inplace=True)
 
+                        # --- CORREÇÃO DE ROBUSTEZ ---
+                        # Em vez de deletar, preenche nomes faltantes
+                        df_detalhes['nome_candidato'].fillna('Candidato não cadastrado', inplace=True)
+                        
                         df_detalhes['texto_completo'] = perfil_vaga_texto + ' ' + df_detalhes['candidato_texto_completo'].fillna('')
-                        df_detalhes.dropna(subset=['nome_candidato'], inplace=True)
-
+                        
                         modelo = st.session_state.modelo_match
                         probabilidades = modelo.predict_proba(df_detalhes[['texto_completo']])
                         df_detalhes['score'] = (probabilidades[:, 1] * 100).astype(int)
@@ -125,16 +117,8 @@ with tab1:
 
 with tab2:
     st.header("Agente 2: Condução das Entrevistas")
-    if not st.session_state.candidatos_para_entrevista:
-        st.info("Nenhum candidato selecionado. Volte para a aba de Matching para selecionar.")
-    else:
-        vaga_atual = st.session_state.vaga_selecionada
-        st.subheader(f"Vaga: {vaga_atual.get('titulo_vaga', 'N/A')}")
-        
-        nomes_candidatos = {c['codigo_candidato']: c.get('nome_candidato', 'Nome não encontrado') for c in st.session_state.candidatos_para_entrevista}
-        id_candidato_selecionado = st.selectbox("Selecione o candidato para entrevistar:", options=list(nomes_candidatos.keys()), format_func=lambda x: nomes_candidatos[x])
-        # O restante do seu código para a tab2...
+    # Seu código da tab2
 
 with tab3:
     st.header("Agente 3: Análise Final Comparativa")
-    # O restante do seu código para a tab3...
+    # Seu código da tab3
