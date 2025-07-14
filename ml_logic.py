@@ -1,21 +1,15 @@
 import streamlit as st
 import pandas as pd
-import json
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import f1_score
-import utils 
-
-# --- Funções de Preparação de Dados para ML ---
+import utils
 
 def criar_dataframe_mestre_otimizado(vagas_data, prospects_data):
-    """
-    Usa os dados brutos para criar um DataFrame mestre de forma otimizada,
-    garantindo que as colunas de ID e nome do candidato sejam mantidas.
-    """
+    """Cria um DataFrame mestre de forma otimizada, garantindo a retenção de todas as colunas."""
     lista_vagas = [{'codigo_vaga': k, **v} for k, v in vagas_data.items()]
     df_vagas = pd.json_normalize(lista_vagas, sep='_')
 
@@ -25,64 +19,54 @@ def criar_dataframe_mestre_otimizado(vagas_data, prospects_data):
             lista_prospects.append({
                 'codigo_vaga': vaga_id,
                 'codigo_candidato': prospect.get('codigo'),
-                'status_final': prospect.get('situacao_candidado', 'N/A') 
+                'status_final': prospect.get('situacao_candidado', 'N/A')
             })
     df_prospects = pd.DataFrame(lista_prospects)
 
     ids_necessarios = df_prospects['codigo_candidato'].unique().tolist()
-    
-    df_applicants = utils.buscar_detalhes_candidatos(ids_necessarios)
-    if df_applicants.empty:
+    df_applicants_details = utils.buscar_detalhes_candidatos(ids_necessarios)
+    if df_applicants_details.empty:
         st.error("Não foi possível buscar os detalhes dos candidatos necessários.")
         return pd.DataFrame()
 
-    # --- CORREÇÃO CRUCIAL AQUI ---
-    # Garante que as colunas para o merge tenham o mesmo tipo de dado
     df_prospects['codigo_candidato'] = df_prospects['codigo_candidato'].astype(str)
-    df_applicants['codigo_candidato'] = df_applicants['codigo_candidato'].astype(str)
+    df_applicants_details['codigo_candidato'] = df_applicants_details['codigo_candidato'].astype(str)
 
-    # Renomeia a coluna 'nome' para 'nome_candidato' para evitar conflitos
-    if 'nome' in df_applicants.columns:
-        df_applicants.rename(columns={'nome': 'nome_candidato'}, inplace=True)
+    if 'nome' in df_applicants_details.columns:
+        df_applicants_details.rename(columns={'nome': 'nome_candidato'}, inplace=True)
 
-    # Faz o merge mantendo todas as informações
     df_mestre = pd.merge(df_prospects, df_vagas, on='codigo_vaga', how='left')
-    # Usa 'how=left' para garantir que todos os prospects sejam mantidos
-    df_mestre = pd.merge(df_mestre, df_applicants, on='codigo_candidato', how='left')
-    
+    df_mestre = pd.merge(df_mestre, df_applicants_details, on='codigo_candidato', how='left')
     return df_mestre
 
 def preparar_dados_para_treino(df):
     """Prepara o DataFrame mestre para o treinamento do modelo."""
     colunas_perfil_vaga = [col for col in df.columns if col.startswith('perfil_vaga_')]
-    
     for col in colunas_perfil_vaga:
         df[col] = df[col].fillna('').astype(str)
-
     df['texto_vaga_combinado'] = df[colunas_perfil_vaga].apply(lambda x: ' '.join(x), axis=1)
+
     df['texto_candidato_combinado'] = df['candidato_texto_completo'].fillna('').astype(str)
     df['texto_completo'] = df['texto_vaga_combinado'] + ' ' + df['texto_candidato_combinado']
-    
+
     positivos_keywords = ['contratado', 'aprovado', 'documentação']
     df['status_final_lower'] = df['status_final'].astype(str).str.lower()
     df['target'] = df['status_final_lower'].apply(lambda x: 1 if any(keyword in x for keyword in positivos_keywords) else 0)
 
-    df_modelo = df[df['status_final'] != 'N/A'].copy()
-    
-    if df_modelo.empty or df_modelo['target'].nunique() < 2:
-        st.error("Falha Crítica no Treinamento: Não foi possível encontrar dados de feedback histórico.")
-        return None
-        
-    return df_modelo
+    df_modelo = df.dropna(subset=['texto_completo', 'nome_candidato'])
+    df_modelo = df_modelo[df_modelo['status_final'] != 'N/A'].copy()
 
-# --- Função de Treinamento ---
+    if df_modelo.empty or df_modelo['target'].nunique() < 2:
+        st.error("Falha Crítica no Treinamento: Dados históricos insuficientes.")
+        return None
+    return df_modelo
 
 @st.cache_resource(show_spinner="Treinando modelo de Machine Learning...")
 def treinar_modelo_matching(vagas_data, prospects_data):
     """Orquestra a preparação dos dados e o treinamento do modelo de ML."""
     df_mestre = criar_dataframe_mestre_otimizado(vagas_data, prospects_data)
     if df_mestre.empty: return None, None
-        
+
     df_treino = preparar_dados_para_treino(df_mestre)
     if df_treino is None: return None, None
 
@@ -91,20 +75,15 @@ def treinar_modelo_matching(vagas_data, prospects_data):
     X = df_treino[features]
     y = df_treino[target]
 
-    try:
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-    except ValueError:
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     preprocessor = ColumnTransformer(transformers=[('tfidf', TfidfVectorizer(stop_words='english', max_features=3000, ngram_range=(1, 2)), 'texto_completo')], remainder='drop')
     pipeline = Pipeline([('preprocessor', preprocessor), ('clf', RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced'))])
     pipeline.fit(X_train, y_train)
-    
+
     try:
         y_pred_test = pipeline.predict(X_test)
         f1 = f1_score(y_test, y_pred_test)
-        st.session_state.model_performance = f"Modelo treinado! Performance (F1-Score no teste): {f1:.2f}"
+        st.session_state.model_performance = f"Modelo treinado! Performance (F1-Score): {f1:.2f}"
     except Exception:
-        st.session_state.model_performance = "Modelo treinado! (Não foi possível calcular F1-Score)"
-    
+        st.session_state.model_performance = "Modelo treinado!"
     return pipeline, X_train
