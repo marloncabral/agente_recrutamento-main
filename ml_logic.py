@@ -10,7 +10,8 @@ import utils
 # --- ETAPA 1: PREPARAÇÃO DOS DADOS ---
 def etapa_1_preparar_dados(vagas_data, prospects_data):
     """
-    Executa a primeira etapa: carregar, unir e limpar os dados para treinamento.
+    Executa a primeira etapa: carregar, unir e limpar os dados para treinamento,
+    preservando todas as colunas necessárias.
     """
     # Função interna para criar o DataFrame mestre
     def criar_dataframe_mestre(vagas_data, prospects_data):
@@ -34,6 +35,7 @@ def etapa_1_preparar_dados(vagas_data, prospects_data):
 
         df_mestre = pd.merge(df_prospects, df_vagas, on='codigo_vaga', how='left')
         if not df_applicants_details.empty:
+            # A correção crucial é manter todas as colunas de df_applicants_details
             df_mestre = pd.merge(df_mestre, df_applicants_details, on='codigo_candidato', how='left')
         else:
             df_mestre['nome_candidato'] = None
@@ -46,6 +48,7 @@ def etapa_1_preparar_dados(vagas_data, prospects_data):
         for col in colunas_perfil_vaga:
             df[col] = df[col].fillna('').astype(str)
         df['texto_vaga_combinado'] = df[colunas_perfil_vaga].apply(lambda x: ' '.join(x), axis=1)
+        
         df['texto_candidato_combinado'] = df['candidato_texto_completo'].fillna('').astype(str)
         df['texto_completo'] = df['texto_vaga_combinado'] + ' ' + df['texto_candidato_combinado']
         
@@ -54,7 +57,7 @@ def etapa_1_preparar_dados(vagas_data, prospects_data):
         df['target'] = df['status_final_lower'].apply(lambda x: 1 if any(keyword in x for keyword in positivos_keywords) else 0)
         
         df_modelo = df[df['status_final'] != 'N/A'].copy()
-        df_modelo.dropna(subset=['texto_completo'], inplace=True) # Remove linhas onde o texto final é nulo
+        df_modelo.dropna(subset=['texto_completo'], inplace=True)
 
         if df_modelo.empty or df_modelo['target'].nunique() < 2:
             return None
@@ -71,6 +74,14 @@ def etapa_2_treinar_modelo(df_treino):
     """Executa o treinamento do pipeline de Machine Learning."""
     if df_treino is None or df_treino.empty: return None, None, None
 
+    # Retorna o DataFrame completo para que o app possa usar as colunas de nome e id
+    return df_treino
+
+# --- ETAPA 3: AVALIAÇÃO E FINALIZAÇÃO ---
+def etapa_3_avaliar_e_finalizar(df_treino):
+    """Treina e avalia o modelo, retornando o pipeline treinado e a performance."""
+    if df_treino is None: return None, "Modelo não pôde ser treinado."
+
     features = ['texto_completo']
     target = 'target'
     X = df_treino[features]
@@ -84,15 +95,12 @@ def etapa_2_treinar_modelo(df_treino):
         ('clf', LogisticRegression(random_state=42, class_weight='balanced', solver='liblinear'))
     ])
     pipeline.fit(X_train, y_train)
-    return pipeline, X_test, y_test
-
-# --- ETAPA 3: AVALIAÇÃO E FINALIZAÇÃO ---
-def etapa_3_avaliar_e_finalizar(pipeline, X_test, y_test):
-    """Executa a etapa final: avalia a performance do modelo treinado."""
-    if pipeline is None: return "Modelo não pôde ser treinado."
+    
     try:
         y_pred_test = pipeline.predict(X_test)
         f1 = f1_score(y_test, y_pred_test)
-        return f"Modelo treinado! Performance (F1-Score): {f1:.2f}"
+        performance_string = f"Modelo treinado! Performance (F1-Score): {f1:.2f}"
     except:
-        return "Modelo treinado! (Não foi possível calcular a performance)"
+        performance_string = "Modelo treinado! (Não foi possível calcular a performance)"
+        
+    return pipeline, performance_string
