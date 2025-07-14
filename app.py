@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import google.generativeai as genai
 import time
-import joblib # Importa a biblioteca para carregar o modelo
+import joblib 
 
 import utils
 
@@ -14,7 +14,7 @@ def carregar_modelo_treinado():
         modelo = joblib.load("modelo_recrutamento.joblib")
         return modelo
     except FileNotFoundError:
-        st.error("Arquivo 'modelo_recrutamento.joblib' não encontrado. Por favor, execute o script 'train.py' localmente e envie o arquivo para o repositório.")
+        st.error("Arquivo 'modelo_recrutamento.joblib' não encontrado. Execute 'train.py' e envie o arquivo para o repositório.")
         return None
 
 # --- Configuração da Página e Carregamento de Dados ---
@@ -53,7 +53,10 @@ with st.sidebar:
 
 # --- Inicialização do Session State ---
 if 'df_analise_resultado' not in st.session_state: st.session_state.df_analise_resultado = pd.DataFrame()
-# ... (outros session_state que você usa) ...
+if 'candidatos_para_entrevista' not in st.session_state: st.session_state.candidatos_para_entrevista = []
+if 'vaga_selecionada' not in st.session_state: st.session_state.vaga_selecionada = {}
+if "messages" not in st.session_state: st.session_state.messages = {}
+if "relatorios_finais" not in st.session_state: st.session_state.relatorios_finais = {}
 
 # --- Abas da Aplicação ---
 tab1, tab2, tab3 = st.tabs(["Agente 1: Matching de Candidatos", "Agente 2: Entrevistas", "Análise Final"])
@@ -89,15 +92,33 @@ with tab1:
 
                         st.session_state.df_analise_resultado = df_detalhes.sort_values(by='score', ascending=False).head(20)
 
-    # O resto do seu código para as abas continua aqui, sem alterações na lógica de exibição.
     if not st.session_state.df_analise_resultado.empty:
-        # ... (código do data_editor e botão de confirmar)
-        pass # Mantenha seu código aqui
+        st.subheader("Candidatos Recomendados")
+        df_para_editar = st.session_state.df_analise_resultado[['codigo_candidato', 'nome_candidato', 'score']].copy()
+        df_para_editar['selecionar'] = False
+        
+        df_editado = st.data_editor(
+            df_para_editar,
+            column_config={"selecionar": st.column_config.CheckboxColumn("Selecionar"), "codigo_candidato": None, "nome_candidato": "Nome do Candidato", "score": st.column_config.ProgressColumn("Score (%)", min_value=0, max_value=100)},
+            hide_index=True, use_container_width=True
+        )
 
+        if st.button("Confirmar Seleção para Entrevista"):
+            codigos_selecionados = df_editado[df_editado['selecionar']]['codigo_candidato'].tolist()
+            if codigos_selecionados:
+                df_completo = st.session_state.df_analise_resultado
+                df_selecionados_final = df_completo[df_completo['codigo_candidato'].isin(codigos_selecionados)]
+                st.session_state.candidatos_para_entrevista = df_selecionados_final.to_dict('records')
+                vaga_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0].to_dict()
+                st.session_state.vaga_selecionada = vaga_data
+                st.success(f"{len(codigos_selecionados)} candidato(s) movido(s) para a aba de entrevistas!")
+                time.sleep(1); st.rerun()
+
+# O restante das abas (tab2, tab3) continua o mesmo.
 with tab2:
-    # ... (código da tab2)
-    pass # Mantenha seu código aqui
+    st.header("Agente 2: Condução das Entrevistas")
+    # ... seu código para a tab2 aqui ...
 
 with tab3:
-    # ... (código da tab3)
-    pass # Mantenha seu código aqui
+    st.header("Agente 3: Análise Final Comparativa")
+    # ... seu código para a tab3 aqui ...
