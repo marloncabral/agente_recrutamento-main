@@ -6,7 +6,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import f1_score
-import utils
+import utils 
 
 def criar_dataframe_mestre_otimizado(vagas_data, prospects_data):
     """Cria um DataFrame mestre de forma otimizada, garantindo a retenção de todas as colunas."""
@@ -25,40 +25,54 @@ def criar_dataframe_mestre_otimizado(vagas_data, prospects_data):
 
     ids_necessarios = df_prospects['codigo_candidato'].unique().tolist()
     df_applicants_details = utils.buscar_detalhes_candidatos(ids_necessarios)
-    if df_applicants_details.empty:
-        st.error("Não foi possível buscar os detalhes dos candidatos necessários.")
-        return pd.DataFrame()
-
+    
+    # Assegura que a coluna de ID do candidato seja string em ambos os dataframes
     df_prospects['codigo_candidato'] = df_prospects['codigo_candidato'].astype(str)
-    df_applicants_details['codigo_candidato'] = df_applicants_details['codigo_candidato'].astype(str)
-
-    if 'nome' in df_applicants_details.columns:
-        df_applicants_details.rename(columns={'nome': 'nome_candidato'}, inplace=True)
+    if not df_applicants_details.empty:
+        df_applicants_details['codigo_candidato'] = df_applicants_details['codigo_candidato'].astype(str)
+        if 'nome' in df_applicants_details.columns:
+            df_applicants_details.rename(columns={'nome': 'nome_candidato'}, inplace=True)
 
     df_mestre = pd.merge(df_prospects, df_vagas, on='codigo_vaga', how='left')
-    df_mestre = pd.merge(df_mestre, df_applicants_details, on='codigo_candidato', how='left')
+    # Se df_applicants_details não estiver vazio, faz o merge
+    if not df_applicants_details.empty:
+        df_mestre = pd.merge(df_mestre, df_applicants_details, on='codigo_candidato', how='left')
+    # Se estiver vazio, garante que as colunas existam, preenchidas com nulos
+    else:
+        df_mestre['nome_candidato'] = None
+        df_mestre['candidato_texto_completo'] = ''
+
     return df_mestre
 
 def preparar_dados_para_treino(df):
-    """Prepara o DataFrame mestre para o treinamento do modelo."""
+    """Prepara o DataFrame mestre para o treinamento do modelo, tratando dados faltantes de forma robusta."""
+    
+    # --- INÍCIO DA CORREÇÃO DE RESILIÊNCIA ---
     colunas_perfil_vaga = [col for col in df.columns if col.startswith('perfil_vaga_')]
     for col in colunas_perfil_vaga:
         df[col] = df[col].fillna('').astype(str)
+    
     df['texto_vaga_combinado'] = df[colunas_perfil_vaga].apply(lambda x: ' '.join(x), axis=1)
-
+    
+    # Trata de forma segura o texto do candidato, que pode ser nulo após o merge
     df['texto_candidato_combinado'] = df['candidato_texto_completo'].fillna('').astype(str)
+    
+    # Combina os textos para a análise do modelo
     df['texto_completo'] = df['texto_vaga_combinado'] + ' ' + df['texto_candidato_combinado']
-
+    
     positivos_keywords = ['contratado', 'aprovado', 'documentação']
     df['status_final_lower'] = df['status_final'].astype(str).str.lower()
     df['target'] = df['status_final_lower'].apply(lambda x: 1 if any(keyword in x for keyword in positivos_keywords) else 0)
 
-    df_modelo = df.dropna(subset=['texto_completo', 'nome_candidato'])
-    df_modelo = df_modelo[df_modelo['status_final'] != 'N/A'].copy()
+    # Filtra apenas os registros que possuem um status final definido
+    df_modelo = df[df['status_final'] != 'N/A'].copy()
+    # Remove o dropna() agressivo que estava causando o problema
+    # --- FIM DA CORREÇÃO DE RESILIÊNCIA ---
 
     if df_modelo.empty or df_modelo['target'].nunique() < 2:
-        st.error("Falha Crítica no Treinamento: Dados históricos insuficientes.")
+        st.error("Falha Crítica no Treinamento: Após filtrar, não há dados históricos suficientes com exemplos de sucesso e fracasso.")
         return None
+        
     return df_modelo
 
 @st.cache_resource(show_spinner="Treinando modelo de Machine Learning...")
