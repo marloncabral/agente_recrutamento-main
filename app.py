@@ -43,7 +43,7 @@ with st.sidebar:
                 pipeline, performance_string = ml_logic.etapa_3_avaliar_e_finalizar(df_treino_final)
             st.success("Etapa 3 de 3: Treinamento concluído!")
 
-            if pipeline:
+            if pipeline is not None:
                 st.session_state.modelo_match = pipeline
                 st.session_state.model_performance = performance_string
                 st.session_state.ml_mode_available = True
@@ -87,15 +87,26 @@ with tab1:
                         if 'nome' in df_detalhes.columns:
                             df_detalhes.rename(columns={'nome': 'nome_candidato'}, inplace=True)
 
+                        # --- CORREÇÃO DE ROBUSTEZ ---
+                        # Em vez de deletar, preenchemos nomes faltantes para não gerar um DataFrame vazio.
+                        if 'nome_candidato' in df_detalhes.columns:
+                            df_detalhes['nome_candidato'].fillna('Candidato não cadastrado', inplace=True)
+                        else:
+                            df_detalhes['nome_candidato'] = 'Candidato não cadastrado'
+
                         df_detalhes['texto_completo'] = perfil_vaga_texto + ' ' + df_detalhes['candidato_texto_completo'].fillna('')
-                        df_detalhes.dropna(subset=['nome_candidato'], inplace=True)
+                        
+                        # Apenas para a predição, garantimos que não haja linhas totalmente vazias.
+                        df_predicao = df_detalhes.dropna(subset=['texto_completo'])
 
-                        modelo = st.session_state.modelo_match
-                        probabilidades = modelo.predict_proba(df_detalhes[['texto_completo']])
-                        df_detalhes['score'] = (probabilidades[:, 1] * 100).astype(int)
-
-                        st.session_state.df_analise_resultado = df_detalhes.sort_values(by='score', ascending=False).head(20)
-
+                        if not df_predicao.empty:
+                            modelo = st.session_state.modelo_match
+                            probabilidades = modelo.predict_proba(df_predicao[['texto_completo']])
+                            df_predicao['score'] = (probabilidades[:, 1] * 100).astype(int)
+                            st.session_state.df_analise_resultado = df_predicao.sort_values(by='score', ascending=False).head(20)
+                        else:
+                            st.warning("Nenhum candidato com informações textuais suficientes para análise.")
+    
     if not st.session_state.df_analise_resultado.empty:
         st.subheader("Candidatos Recomendados")
         df_para_editar = st.session_state.df_analise_resultado[['codigo_candidato', 'nome_candidato', 'score']].copy()
@@ -120,8 +131,8 @@ with tab1:
 
 with tab2:
     st.header("Agente 2: Condução das Entrevistas")
-    # ... (seu código da tab2)
+    # ... seu código da tab2
 
 with tab3:
     st.header("Agente 3: Análise Final Comparativa")
-    # ... (seu código da tab3)
+    # ... seu código da tab3
