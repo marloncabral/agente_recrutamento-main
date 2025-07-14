@@ -3,7 +3,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import RandomForestClassifier
+# IMPORTAÇÃO DA NOVA BIBLIOTECA
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score
 import utils
 
@@ -54,7 +55,9 @@ def etapa_1_preparar_dados(vagas_data, prospects_data):
         df['status_final_lower'] = df['status_final'].astype(str).str.lower()
         df['target'] = df['status_final_lower'].apply(lambda x: 1 if any(keyword in x for keyword in positivos_keywords) else 0)
         
-        df_modelo = df[df['status_final'] != 'N/A'].copy()
+        df_modelo = df.dropna(subset=['texto_completo'])
+        df_modelo = df_modelo[df_modelo['status_final'] != 'N/A'].copy()
+
         if df_modelo.empty or df_modelo['target'].nunique() < 2:
             return None
         return df_modelo
@@ -79,8 +82,15 @@ def etapa_2_treinar_modelo(df_treino):
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
-    preprocessor = ColumnTransformer(transformers=[('tfidf', TfidfVectorizer(stop_words='english', max_features=3000, ngram_range=(1, 2)), 'texto_completo')], remainder='drop')
-    pipeline = Pipeline([('preprocessor', preprocessor), ('clf', RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced'))])
+    preprocessor = ColumnTransformer(transformers=[('tfidf', TfidfVectorizer(stop_words='english', max_features=3000, ngram_range=(1, 2))), 'texto_completo')], remainder='drop')
+    
+    # --- MUDANÇA PRINCIPAL AQUI ---
+    # Trocando RandomForest por LogisticRegression, que é muito mais rápido.
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('clf', LogisticRegression(random_state=42, class_weight='balanced', solver='liblinear'))
+    ])
+    # --- FIM DA MUDANÇA ---
     
     pipeline.fit(X_train, y_train)
     
