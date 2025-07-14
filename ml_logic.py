@@ -3,7 +3,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
-# IMPORTAÇÃO DA NOVA BIBLIOTECA
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score
 import utils
@@ -82,15 +81,20 @@ def etapa_2_treinar_modelo(df_treino):
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
-    preprocessor = ColumnTransformer(transformers=[('tfidf', TfidfVectorizer(stop_words='english', max_features=3000, ngram_range=(1, 2))), 'texto_completo')], remainder='drop')
+    # --- INÍCIO DA CORREÇÃO DE SINTAXE ---
+    # A coluna 'texto_completo' foi movida para DENTRO da tupla, como terceiro elemento.
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('tfidf', TfidfVectorizer(stop_words='english', max_features=3000, ngram_range=(1, 2)), 'texto_completo')
+        ], 
+        remainder='drop'
+    )
+    # --- FIM DA CORREÇÃO DE SINTAXE ---
     
-    # --- MUDANÇA PRINCIPAL AQUI ---
-    # Trocando RandomForest por LogisticRegression, que é muito mais rápido.
     pipeline = Pipeline([
         ('preprocessor', preprocessor),
         ('clf', LogisticRegression(random_state=42, class_weight='balanced', solver='liblinear'))
     ])
-    # --- FIM DA MUDANÇA ---
     
     pipeline.fit(X_train, y_train)
     
