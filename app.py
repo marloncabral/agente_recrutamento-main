@@ -14,13 +14,16 @@ def carregar_modelo_treinado():
         modelo = joblib.load("modelo_recrutamento.joblib")
         return modelo
     except FileNotFoundError:
-        st.error("Arquivo 'modelo_recrutamento.joblib' não encontrado.")
+        st.error("Arquivo 'modelo_recrutamento.joblib' não encontrado. Certifique-se de que ele foi gerado pelo 'train.py' e está no repositório.")
         return None
 
 # --- FUNÇÃO PARA CARREGAR A BASE COMPLETA DE CANDIDATOS ---
 @st.cache_data
 def carregar_candidatos_completos():
-    """Carrega e prepara a base de candidatos de forma robusta."""
+    """
+    Carrega e prepara a base completa de candidatos de forma robusta,
+    lendo o arquivo linha por linha para ignorar JSONs malformados.
+    """
     data = []
     erros = 0
     with open(utils.NDJSON_FILENAME, 'r', encoding='utf-8') as f:
@@ -29,19 +32,24 @@ def carregar_candidatos_completos():
                 data.append(json.loads(line))
             except json.JSONDecodeError:
                 erros += 1
-                continue
+                continue # Pula a linha com erro e continua para a próxima
+    
     if erros > 0:
-        st.warning(f"Atenção: {erros} registro(s) de candidatos foram ignorados devido a erros de formatação.")
+        st.warning(f"Atenção: {erros} registro(s) de candidatos foram ignorados devido a erros de formatação no arquivo de dados.")
+
     if not data:
         st.error("Nenhum registro de candidato pôde ser carregado.")
         return pd.DataFrame()
+
     df = pd.DataFrame(data)
     df_normalized = pd.json_normalize(df.to_dict('records'), sep='_')
+    
     coluna_nome = 'informacoes_pessoais_dados_pessoais_nome_completo'
     if coluna_nome in df_normalized.columns:
         df_normalized.rename(columns={coluna_nome: 'nome_candidato'}, inplace=True)
     else:
         df_normalized['nome_candidato'] = 'Nome não encontrado'
+        
     df_normalized['codigo_candidato'] = df_normalized['codigo_candidato'].astype(str)
     return df_normalized
 
@@ -149,6 +157,7 @@ if dados_carregados_com_sucesso:
                     if not df_detalhes.empty:
                         vaga_selecionada_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
                         perfil_vaga_texto = vaga_selecionada_data['perfil_vaga_texto']
+                        
                         text_cols = ['informacoes_profissionais_resumo_profissional', 'informacoes_profissionais_conhecimentos', 'cv_pt', 'cv_en']
                         for col in text_cols:
                             if col not in df_detalhes.columns: df_detalhes[col] = ''
@@ -216,7 +225,6 @@ if dados_carregados_com_sucesso:
                 with st.spinner("Analisando entrevista e gerando relatório..."):
                     historico_final = "\n".join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.messages[id_candidato_selecionado]])
                     relatorio = gerar_relatorio_final(vaga_atual, candidato_atual, historico_final, google_api_key)
-
                     if vaga_atual['codigo_vaga'] not in st.session_state.relatorios_finais:
                         st.session_state.relatorios_finais[vaga_atual['codigo_vaga']] = {}
                     st.session_state.relatorios_finais[vaga_atual['codigo_vaga']][id_candidato_selecionado] = relatorio
@@ -225,7 +233,7 @@ if dados_carregados_com_sucesso:
 
     with tab3:
         st.header("Agente 3: Análise Final Comparativa")
-        if not st.session_state.candidatos_para_entrevista or not st.session_state.get('relatorios_finais'):
+        if not st.session_state.get('relatorios_finais'):
             st.info("Gere relatórios de entrevista na Etapa 2 para poder fazer a análise comparativa.")
         else:
             codigo_vaga_atual = st.session_state.vaga_selecionada.get('codigo_vaga')
@@ -240,7 +248,6 @@ if dados_carregados_com_sucesso:
                     nome_cand = opcoes_entrevista.get(id_candidato, f"ID: {id_candidato}")
                     with st.expander(f"Ver relatório de {nome_cand}"):
                         st.markdown(relatorio)
-
                 if len(relatorios_vaga_atual) >= 2:
                     if st.button("Gerar Análise Comparativa Final com IA", type="primary"):
                         with st.spinner("IA está analisando todos os finalistas..."):
