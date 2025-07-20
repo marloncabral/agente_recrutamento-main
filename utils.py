@@ -4,6 +4,7 @@ import json
 import os
 import requests
 from pathlib import Path
+import duckdb # <--- LINHA ADICIONADA
 
 # --- Constantes de Arquivos e URLs ---
 DATA_DIR = Path("./data")
@@ -17,7 +18,9 @@ PROSPECTS_FILENAME = DATA_DIR / "prospects.json"
 
 # --- Funções de Preparação e Download de Dados ---
 def preparar_dados_candidatos():
-    """Garante que todos os arquivos de dados necessários estejam disponíveis para o app Streamlit."""
+    """
+    Garante que todos os arquivos de dados necessários estejam disponíveis para o app Streamlit.
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     baixar_arquivo_se_nao_existir(VAGAS_JSON_URL, VAGAS_FILENAME)
     baixar_arquivo_se_nao_existir(PROSPECTS_JSON_URL, PROSPECTS_FILENAME)
@@ -29,7 +32,8 @@ def preparar_dados_candidatos():
         st.info(f"Primeiro uso: Convertendo '{RAW_APPLICANTS_FILENAME.name}' para um formato otimizado...")
         with st.spinner("Isso pode levar um momento, mas só acontecerá uma vez."):
             try:
-                with open(RAW_APPLICANTS_FILENAME, 'r', encoding='utf-8') as f_in: data = json.load(f_in)
+                with open(RAW_APPLICANTS_FILENAME, 'r', encoding='utf-8') as f_in:
+                    data = json.load(f_in)
                 with open(NDJSON_FILENAME, 'w', encoding='utf-8') as f_out:
                     for codigo, candidato_data in data.items():
                         candidato_data['codigo_candidato'] = codigo
