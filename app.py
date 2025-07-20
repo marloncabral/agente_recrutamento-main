@@ -16,6 +16,24 @@ def carregar_modelo_treinado():
         st.error("Arquivo 'modelo_recrutamento.joblib' não encontrado. Certifique-se de que ele foi gerado pelo 'train.py' e está no repositório.")
         return None
 
+# --- FUNÇÃO PARA CARREGAR A BASE COMPLETA DE CANDIDATOS ---
+@st.cache_data
+def carregar_candidatos_completos():
+    """Carrega e prepara a base completa de candidatos uma única vez."""
+    try:
+        df = pd.read_json(utils.NDJSON_FILENAME, lines=True)
+        # Normaliza as colunas aninhadas para facilitar o acesso
+        df_normalized = pd.json_normalize(df.to_dict('records'), sep='_')
+        # Renomeia a coluna de nome para o nosso padrão
+        if 'informacoes_pessoais_dados_pessoais_nome_completo' in df_normalized.columns:
+            df_normalized.rename(columns={'informacoes_pessoais_dados_pessoais_nome_completo': 'nome_candidato'}, inplace=True)
+        # Garante que o ID seja string
+        df_normalized['codigo_candidato'] = df_normalized['codigo_candidato'].astype(str)
+        return df_normalized
+    except Exception as e:
+        st.error(f"Erro ao carregar a base de dados de candidatos: {e}")
+        return pd.DataFrame()
+
 # --- Configuração da Página e Carregamento de Dados ---
 st.set_page_config(page_title="Decision - Assistente de Recrutamento IA", page_icon="✨", layout="wide")
 
@@ -23,9 +41,10 @@ if not utils.preparar_dados_candidatos():
     st.error("Falha na preparação dos dados. A aplicação será interrompida.")
     st.stop()
 
-vagas_data_dict = utils.carregar_json(utils.VAGAS_FILENAME)
-prospects_data_dict = utils.carregar_json(utils.PROSPECTS_FILENAME)
+# Carrega todos os dados necessários no início
 df_vagas_ui = utils.carregar_vagas()
+prospects_data_dict = utils.carregar_json(utils.PROSPECTS_FILENAME)
+df_applicants_completo = carregar_candidatos_completos()
 
 st.title("✨ Assistente de Recrutamento da Decision")
 
@@ -70,42 +89,43 @@ with tab1:
                 if not prospects_da_vaga:
                     st.warning("Nenhum candidato (prospect) encontrado para esta vaga no histórico.")
                 else:
-                    ids_candidatos = [p['codigo'] for p in prospects_da_vaga]
-                    df_detalhes_candidatos = utils.buscar_detalhes_candidatos(ids_candidatos)
+                    ids_candidatos = [str(p['codigo']) for p in prospects_da_vaga]
+                    
+                    # Faz a busca na base completa de candidatos já carregada
+                    df_detalhes = df_applicants_completo[df_applicants_completo['codigo_candidato'].isin(ids_candidatos)].copy()
 
-                    if not df_detalhes_candidatos.empty:
+                    if not df_detalhes.empty:
                         vaga_selecionada_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
                         perfil_vaga_texto = vaga_selecionada_data['perfil_vaga_texto']
 
-                        if 'nome' in df_detalhes_candidatos.columns:
-                            df_detalhes_candidatos.rename(columns={'nome': 'nome_candidato'}, inplace=True)
-                        
-                        df_detalhes_candidatos['nome_candidato'].fillna('Candidato não cadastrado', inplace=True)
-                        
-                        # --- CORREÇÃO FINAL ---
-                        # Cria a coluna 'texto_completo' ANTES de passar para o modelo
-                        df_detalhes_candidatos['texto_completo'] = perfil_vaga_texto + ' ' + df_detalhes_candidatos['candidato_texto_completo'].fillna('')
+                        # Constrói o texto completo para o modelo
+                        text_cols = ['informacoes_profissionais_resumo_profissional', 'informacoes_profissionais_conhecimentos', 'cv_pt', 'cv_en']
+                        for col in text_cols:
+                            if col not in df_detalhes.columns: df_detalhes[col] = ''
+                        df_detalhes['candidato_texto_completo'] = df_detalhes[text_cols].fillna('').astype(str).agg(' '.join, axis=1)
+                        df_detalhes['texto_completo'] = perfil_vaga_texto + ' ' + df_detalhes['candidato_texto_completo']
                         
                         modelo = st.session_state.modelo_match
-                        
-                        # Garante que o DataFrame não está vazio antes de prever
-                        if not df_detalhes_candidatos.empty:
-                            probabilidades = modelo.predict_proba(df_detalhes_candidatos[['texto_completo']])
-                            df_detalhes_candidatos['score'] = (probabilidades[:, 1] * 100).astype(int)
-                            st.session_state.df_analise_resultado = df_detalhes_candidatos.sort_values(by='score', ascending=False).head(20)
-                        else:
-                            st.warning("Nenhum candidato com dados suficientes para análise.")
+                        probabilidades = modelo.predict_proba(df_detalhes[['texto_completo']])
+                        df_detalhes['score'] = (probabilidades[:, 1] * 100).astype(int)
+
+                        st.session_state.df_analise_resultado = df_detalhes.sort_values(by='score', ascending=False).head(20)
                     else:
-                        st.error("Não foi possível buscar detalhes dos candidatos.")
+                        st.error("Não foi possível encontrar os detalhes dos candidatos listados.")
 
     if not st.session_state.df_analise_resultado.empty:
         st.subheader("Candidatos Recomendados")
-        df_para_editar = st.session_state.df_analise_resultado[['codigo_candidato', 'nome_candidato', 'score']].copy()
+        # Prepara o DataFrame para exibição ANÔNIMA
+        df_para_editar = st.session_state.df_analise_resultado[['codigo_candidato', 'score']].copy()
         df_para_editar['selecionar'] = False
         
         df_editado = st.data_editor(
             df_para_editar,
-            column_config={"selecionar": st.column_config.CheckboxColumn("Selecionar"), "codigo_candidato": None, "nome_candidato": "Nome do Candidato", "score": st.column_config.ProgressColumn("Score (%)", min_value=0, max_value=100)},
+            column_config={
+                "selecionar": st.column_config.CheckboxColumn("Selecionar"), 
+                "codigo_candidato": "ID do Candidato", # Mostra o ID em vez do nome
+                "score": st.column_config.ProgressColumn("Score (%)", min_value=0, max_value=100)
+            },
             hide_index=True, use_container_width=True
         )
 
@@ -114,22 +134,26 @@ with tab1:
             if codigos_selecionados:
                 df_completo = st.session_state.df_analise_resultado
                 df_selecionados_final = df_completo[df_completo['codigo_candidato'].isin(codigos_selecionados)]
+                
                 st.session_state.candidatos_para_entrevista = df_selecionados_final.to_dict('records')
                 vaga_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0].to_dict()
                 st.session_state.vaga_selecionada = vaga_data
                 st.success(f"{len(codigos_selecionados)} candidato(s) movido(s) para a aba de entrevistas!")
                 time.sleep(1); st.rerun()
 
-# O restante das abas permanece o mesmo
 with tab2:
     st.header("Agente 2: Condução das Entrevistas")
     if not st.session_state.candidatos_para_entrevista:
         st.info("Nenhum candidato selecionado. Volte para a aba de Matching para selecionar.")
     else:
-        # A lógica da tab2 continua aqui...
-        pass
-
+        vaga_atual = st.session_state.vaga_selecionada
+        st.subheader(f"Vaga: {vaga_atual.get('titulo_vaga', 'N/A')}")
+        
+        # Agora a busca pelo nome funcionará corretamente
+        nomes_candidatos = {c['codigo_candidato']: c.get('nome_candidato', 'Nome não encontrado') for c in st.session_state.candidatos_para_entrevista}
+        id_candidato_selecionado = st.selectbox("Selecione o candidato para entrevistar:", options=list(nomes_candidatos.keys()), format_func=lambda x: nomes_candidatos[x])
+        # O restante da lógica da tab2 continua aqui...
+        
 with tab3:
     st.header("Agente 3: Análise Final Comparativa")
-    # A lógica da tab3 continua aqui...
-    pass
+    # O restante da lógica da tab3 continua aqui...
