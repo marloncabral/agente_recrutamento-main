@@ -16,7 +16,8 @@ NDJSON_FILENAME = DATA_DIR / "applicants.nd.json"
 VAGAS_FILENAME = DATA_DIR / "vagas.json"
 PROSPECTS_FILENAME = DATA_DIR / "prospects.json"
 
-# --- Funções de Preparação e Download de Dados ---
+# ... (o resto das funções baixar_arquivo, preparar_dados, etc. permanecem iguais) ...
+
 def preparar_dados_candidatos():
     """Garante que todos os arquivos de dados necessários estejam disponíveis para o app Streamlit."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -61,7 +62,6 @@ def baixar_arquivo_se_nao_existir(url, nome_arquivo, is_large=False):
         st.error(f"Erro ao baixar o arquivo '{nome_arquivo.name}': {e}.")
         return False
 
-# --- Funções de Carregamento de Dados ---
 @st.cache_data
 def carregar_json(caminho_arquivo):
     """Função genérica e segura para carregar um arquivo JSON."""
@@ -85,12 +85,13 @@ def carregar_vagas():
     return pd.DataFrame(vagas_lista)
 
 def buscar_detalhes_candidatos(codigos_candidatos):
-    """Busca detalhes de uma lista de candidatos usando DuckDB para performance."""
-    if not codigos_candidatos: return pd.DataFrame()
-    codigos_str = ", ".join([f"'{c}'" for c in codigos_candidatos])
+    """Busca detalhes de uma lista de candidatos usando DuckDB com o caminho corrigido para o nome."""
+    if not isinstance(codigos_candidatos, list) or not codigos_candidatos:
+        return pd.DataFrame()
+    
+    codigos_str = ", ".join([f"'{str(c)}'" for c in codigos_candidatos])
     
     # --- CORREÇÃO DEFINITIVA DA QUERY ---
-    # O caminho para o nome completo foi corrigido para o nível correto do JSON.
     query = f"""
     SELECT
         codigo_candidato,
@@ -108,6 +109,5 @@ def buscar_detalhes_candidatos(codigos_candidatos):
         with duckdb.connect(database=':memory:', read_only=False) as con:
             return con.execute(query).fetchdf()
     except Exception as e:
-        # No app Streamlit, mostraríamos um erro. No script de treino, é melhor parar.
         print(f"Erro ao consultar o arquivo de candidatos com DuckDB: {e}")
         return pd.DataFrame()
