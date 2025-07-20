@@ -1,133 +1,140 @@
+# -*- coding: utf-8 -*-
+
+import streamlit as st
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.linear_model import LogisticRegression
-import joblib
 import json
 import os
 import requests
-from pathlib import Path
-import sklearn
-import utils
+import time
+import duckdb
 
-# --- SEÇÃO DE CONFIGURAÇÃO E DOWNLOAD AUTÔNOMO ---
-print("Iniciando processo de treinamento do modelo...")
-print(f"Versão do scikit-learn utilizada para treinamento: {sklearn.__version__}")
-
-DATA_DIR = Path("./data")
+# --- URLs para os arquivos no Hugging Face ---
 APPLICANTS_JSON_URL = "https://huggingface.co/datasets/Postech7/datathon-fiap/resolve/main/applicants.json"
 VAGAS_JSON_URL = "https://huggingface.co/datasets/Postech7/datathon-fiap/resolve/main/vagas.json"
 PROSPECTS_JSON_URL = "https://huggingface.co/datasets/Postech7/datathon-fiap/resolve/main/prospects.json"
-RAW_APPLICANTS_FILENAME = DATA_DIR / "applicants.raw.json"
-NDJSON_FILENAME = DATA_DIR / "applicants.nd.json"
-VAGAS_FILENAME = DATA_DIR / "vagas.json"
-PROSPECTS_FILENAME = DATA_DIR / "prospects.json"
-MODELO_FILENAME = "modelo_recrutamento.joblib"
+NDJSON_FILENAME = "applicants_nd.json"
+ORIGINAL_APPLICANTS_FILENAME = "applicants.json"
+VAGAS_FILENAME = "vagas.json"
+PROSPECTS_FILENAME = "prospects.json"
 
-def baixar_arquivo(url, nome_arquivo, is_large=False):
-    """Função de download que usa 'print' em vez de comandos do Streamlit."""
+# --- Funções de Preparação e Download de Dados ---
+
+def baixar_arquivo_se_nao_existir(url, nome_arquivo, is_large=False):
+    """
+    Baixa um arquivo da URL especificada se ele não existir localmente.
+    Lida com arquivos grandes (stream) e pequenos.
+    """
     if os.path.exists(nome_arquivo):
-        print(f"Arquivo '{nome_arquivo.name}' já existe. Pulando download.")
         return True
-    
-    print(f"Baixando '{nome_arquivo.name}' de {url}...")
+
+    st.info(f"Arquivo '{nome_arquivo}' não encontrado. Baixando do repositório...")
     try:
-        response = requests.get(url, stream=is_large)
-        response.raise_for_status()
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        with open(nome_arquivo, 'wb') as f:
-            if is_large:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            else:
-                f.write(response.content)
-        print(f"Download de '{nome_arquivo.name}' concluído.")
+        with st.spinner(f"Baixando {nome_arquivo}... (Pode levar um momento)"):
+            response = requests.get(url, stream=is_large)
+            response.raise_for_status()
+            with open(nome_arquivo, 'wb') as f:
+                if is_large:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                else:
+                    f.write(response.content)
+        st.success(f"Arquivo '{nome_arquivo}' baixado com sucesso!")
         return True
-    # --- CORREÇÃO DE SINTAXE AQUI ---
-    # Adicionando o bloco 'except' que estava faltando.
     except requests.exceptions.RequestException as e:
-        print(f"ERRO: Falha ao baixar '{nome_arquivo.name}': {e}")
-        return False
-    # --- FIM DA CORREÇÃO ---
+        st.error(f"Erro ao baixar o arquivo '{nome_arquivo}': {e}. Verifique a URL.")
+        st.stop()
+    return False
 
-# Garante que todos os dados sejam baixados antes de continuar
-print("\n--- Etapa 0: Verificação e Download dos Dados ---")
-if not all([
-    baixar_arquivo(VAGAS_JSON_URL, VAGAS_FILENAME),
-    baixar_arquivo(PROSPECTS_JSON_URL, PROSPECTS_FILENAME),
-    baixar_arquivo(APPLICANTS_JSON_URL, RAW_APPLICANTS_FILENAME, is_large=True)
-]):
-    print("Falha no download de um ou mais arquivos. Abortando o treinamento.")
-    exit()
+def preparar_dados_candidatos():
+    """
+    Garante que todos os arquivos de dados necessários estejam disponíveis,
+    convertendo o 'applicants.json' para o formato otimizado NDJSON na primeira vez.
+    """
+    # Garante que os arquivos menores (vagas, prospects) existam.
+    baixar_arquivo_se_nao_existir(VAGAS_JSON_URL, VAGAS_FILENAME)
+    baixar_arquivo_se_nao_existir(PROSPECTS_JSON_URL, PROSPECTS_FILENAME)
 
-if not os.path.exists(NDJSON_FILENAME):
-    print(f"\nConvertendo '{RAW_APPLICANTS_FILENAME.name}' para formato otimizado NDJSON...")
+    # Lida com o arquivo grande de candidatos
+    if os.path.exists(NDJSON_FILENAME):
+        return
+
+    # Baixa o arquivo original grande se necessário
+    baixar_arquivo_se_nao_existir(APPLICANTS_JSON_URL, ORIGINAL_APPLICANTS_FILENAME, is_large=True)
+
+    # Converte o JSON original para NDJSON para otimizar a leitura
+    st.info(f"Primeiro uso: Convertendo '{ORIGINAL_APPLICANTS_FILENAME}' para um formato otimizado...")
+    with st.spinner("Isso pode levar um momento, mas só acontecerá uma vez."):
+        try:
+            with open(ORIGINAL_APPLICANTS_FILENAME, 'r', encoding='utf-8') as f_in:
+                data = json.load(f_in)
+
+            with open(NDJSON_FILENAME, 'w', encoding='utf-8') as f_out:
+                for codigo, candidato_data in data.items():
+                    candidato_data['codigo_candidato'] = codigo
+                    json.dump(candidato_data, f_out)
+                    f_out.write('\n')
+            st.success("Arquivo de dados otimizado com sucesso!")
+            time.sleep(2)
+        except Exception as e:
+            st.error(f"Falha ao converter o arquivo JSON: {e}")
+            st.stop()
+
+# --- Funções de Carregamento de Dados ---
+
+@st.cache_data
+def carregar_vagas():
+    """Carrega os dados das vagas a partir do arquivo JSON local."""
+    with open(VAGAS_FILENAME, 'r', encoding='utf-8') as f:
+        vagas_data = json.load(f)
+    vagas_lista = []
+    for codigo, dados in vagas_data.items():
+        vaga_info = {
+            'codigo_vaga': codigo,
+            'titulo_vaga': dados.get('informacoes_basicas', {}).get('titulo_vaga', 'N/A'),
+            'cliente': dados.get('informacoes_basicas', {}).get('cliente', 'N/A'),
+            'perfil_vaga_texto': json.dumps(dados.get('perfil_vaga', {})) # Converte o perfil para texto
+        }
+        vagas_lista.append(vaga_info)
+    return pd.DataFrame(vagas_lista)
+
+@st.cache_data
+def carregar_prospects():
+    """Carrega os dados dos prospects a partir do arquivo JSON local."""
+    with open(PROSPECTS_FILENAME, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def buscar_detalhes_candidatos(codigos_candidatos):
+    """Busca detalhes de uma lista de candidatos usando DuckDB para performance."""
+    if not codigos_candidatos:
+        return pd.DataFrame()
+
+    codigos_str = ", ".join([f"'{c}'" for c in codigos_candidatos])
+
+    query = f"""
+    SELECT
+        codigo_candidato,
+        informacoes_pessoais ->> 'nome_completo' AS nome,
+        (
+            (informacoes_profissionais ->> 'resumo_profissional'       ) || ' ' ||
+            (informacoes_profissionais ->> 'conhecimentos'             ) || ' ' ||
+            (informacoes_profissionais ->> 'area_de_atuacao'           ) || ' ' ||
+            (informacoes_profissionais ->> 'nivel_profissional'        ) || ' ' ||
+            (formacao_e_idiomas      ->> 'formacao'                    ) || ' ' ||
+            (formacao_e_idiomas      ->> 'nivel_ingles'                ) || ' ' ||
+            cv_pt || ' ' || cv_en
+        ) AS candidato_texto_completo
+    FROM read_json_auto('{NDJSON_FILENAME}')
+    WHERE codigo_candidato IN ({codigos_str})
+    """
     try:
-        with open(RAW_APPLICANTS_FILENAME, 'r', encoding='utf-8') as f_in:
-            data = json.load(f_in)
-        with open(NDJSON_FILENAME, 'w', encoding='utf-8') as f_out:
-            for codigo, candidato_data in data.items():
-                candidato_data['codigo_candidato'] = codigo
-                json.dump(candidato_data, f_out)
-                f_out.write('\n')
-        print("Conversão para NDJSON concluída com sucesso.")
+        with duckdb.connect(database=':memory:', read_only=False) as con:
+            return con.execute(query).fetchdf()
     except Exception as e:
-        print(f"ERRO: Falha ao converter arquivo: {e}")
-        exit()
+        st.error(f"Erro ao consultar o arquivo de candidatos com DuckDB: {e}")
+        return pd.DataFrame()
 
-# --- INÍCIO DO PROCESSO DE TREINAMENTO ---
-print("\n--- Etapa 1: Carregando e Preparando os Dados ---")
-with open(VAGAS_FILENAME, 'r', encoding='utf-8') as f:
-    vagas_data = json.load(f)
-with open(PROSPECTS_FILENAME, 'r', encoding='utf-8') as f:
-    prospects_data = json.load(f)
-
-# O restante do código permanece o mesmo
-lista_vagas = [{'codigo_vaga': k, **v} for k, v in vagas_data.items()]
-df_vagas = pd.json_normalize(lista_vagas, sep='_')
-lista_prospects = []
-for vaga_id, data in prospects_data.items():
-    for p in data.get('prospects', []): lista_prospects.append({'codigo_vaga': vaga_id, 'codigo_candidato': p.get('codigo'), 'status_final': p.get('situacao_candidado', 'N/A')})
-df_prospects = pd.DataFrame(lista_prospects)
-ids_necessarios = df_prospects['codigo_candidato'].dropna().unique().tolist()
-df_applicants_details = utils.buscar_detalhes_candidatos(ids_necessarios)
-
-df_prospects['codigo_candidato'] = df_prospects['codigo_candidato'].astype(str)
-if not df_applicants_details.empty:
-    df_applicants_details['codigo_candidato'] = df_applicants_details['codigo_candidato'].astype(str)
-    if 'nome' in df_applicants_details.columns:
-        df_applicants_details.rename(columns={'nome': 'nome_candidato'}, inplace=True)
-df_mestre = pd.merge(df_prospects, df_vagas, on='codigo_vaga', how='left')
-if not df_applicants_details.empty:
-    df_mestre = pd.merge(df_mestre, df_applicants_details, on='codigo_candidato', how='left')
-
-colunas_perfil_vaga = [col for col in df_mestre.columns if col.startswith('perfil_vaga_')]
-for col in colunas_perfil_vaga: df_mestre[col] = df_mestre[col].fillna('').astype(str)
-df_mestre['texto_vaga_combinado'] = df_mestre[colunas_perfil_vaga].apply(lambda x: ' '.join(x), axis=1)
-df_mestre['texto_candidato_combinado'] = df_mestre['candidato_texto_completo'].fillna('')
-df_mestre['texto_completo'] = df_mestre['texto_vaga_combinado'] + ' ' + df_mestre['texto_candidato_combinado']
-positivos_keywords = ['contratado', 'aprovado', 'documentação', 'encaminhado ao requisitante']
-df_mestre['status_final_lower'] = df_mestre['status_final'].astype(str).str.lower()
-df_mestre['target'] = df_mestre['status_final_lower'].apply(lambda x: 1 if any(k in x for k in positivos_keywords) else 0)
-df_treino = df_mestre[df_mestre['status_final'] != 'N/A'].dropna(subset=['texto_completo']).copy()
-
-print(f"Total de {len(df_treino)} registros válidos para o treinamento.")
-print(f"Distribuição do Alvo: \n{df_treino['target'].value_counts(normalize=True)}")
-
-print("\n--- Etapa 2: Treinando o Modelo de Machine Learning ---")
-X = df_treino[['texto_completo']]
-y = df_treino['target']
-X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-preprocessor = ColumnTransformer(transformers=[('tfidf', TfidfVectorizer(stop_words='english', max_features=2000, ngram_range=(1, 2)), 'texto_completo')], remainder='drop')
-pipeline = Pipeline([
-    ('preprocessor', preprocessor),
-    ('clf', LogisticRegression(random_state=42, class_weight='balanced', solver='liblinear'))
-])
-pipeline.fit(X_train, y_train)
-
-print("\n--- Etapa 3: Salvando o Modelo Treinado ---")
-joblib.dump(pipeline, MODELO_FILENAME)
-print(f"\nTreinamento concluído! Modelo salvo como '{MODELO_FILENAME}'.")
-print("Faça o upload deste arquivo para o seu repositório no GitHub.")
+@st.cache_data
+def carregar_json(caminho_arquivo):
+    """Função genérica para carregar um arquivo JSON."""
+    with open(caminho_arquivo, 'r', encoding='utf-8') as f:
+        return json.load(f)
