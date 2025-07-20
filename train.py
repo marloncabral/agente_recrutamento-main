@@ -43,3 +43,91 @@ def baixar_arquivo(url, nome_arquivo, is_large=False):
                     f.write(chunk)
             else:
                 f.write(response.content)
+        print(f"Download de '{nome_arquivo.name}' concluído.")
+        return True
+    # --- CORREÇÃO DE SINTAXE AQUI ---
+    # Adicionando o bloco 'except' que estava faltando.
+    except requests.exceptions.RequestException as e:
+        print(f"ERRO: Falha ao baixar '{nome_arquivo.name}': {e}")
+        return False
+    # --- FIM DA CORREÇÃO ---
+
+# Garante que todos os dados sejam baixados antes de continuar
+print("\n--- Etapa 0: Verificação e Download dos Dados ---")
+if not all([
+    baixar_arquivo(VAGAS_JSON_URL, VAGAS_FILENAME),
+    baixar_arquivo(PROSPECTS_JSON_URL, PROSPECTS_FILENAME),
+    baixar_arquivo(APPLICANTS_JSON_URL, RAW_APPLICANTS_FILENAME, is_large=True)
+]):
+    print("Falha no download de um ou mais arquivos. Abortando o treinamento.")
+    exit()
+
+if not os.path.exists(NDJSON_FILENAME):
+    print(f"\nConvertendo '{RAW_APPLICANTS_FILENAME.name}' para formato otimizado NDJSON...")
+    try:
+        with open(RAW_APPLICANTS_FILENAME, 'r', encoding='utf-8') as f_in:
+            data = json.load(f_in)
+        with open(NDJSON_FILENAME, 'w', encoding='utf-8') as f_out:
+            for codigo, candidato_data in data.items():
+                candidato_data['codigo_candidato'] = codigo
+                json.dump(candidato_data, f_out)
+                f_out.write('\n')
+        print("Conversão para NDJSON concluída com sucesso.")
+    except Exception as e:
+        print(f"ERRO: Falha ao converter arquivo: {e}")
+        exit()
+
+# --- INÍCIO DO PROCESSO DE TREINAMENTO ---
+print("\n--- Etapa 1: Carregando e Preparando os Dados ---")
+with open(VAGAS_FILENAME, 'r', encoding='utf-8') as f:
+    vagas_data = json.load(f)
+with open(PROSPECTS_FILENAME, 'r', encoding='utf-8') as f:
+    prospects_data = json.load(f)
+
+# O restante do código permanece o mesmo
+lista_vagas = [{'codigo_vaga': k, **v} for k, v in vagas_data.items()]
+df_vagas = pd.json_normalize(lista_vagas, sep='_')
+lista_prospects = []
+for vaga_id, data in prospects_data.items():
+    for p in data.get('prospects', []): lista_prospects.append({'codigo_vaga': vaga_id, 'codigo_candidato': p.get('codigo'), 'status_final': p.get('situacao_candidado', 'N/A')})
+df_prospects = pd.DataFrame(lista_prospects)
+ids_necessarios = df_prospects['codigo_candidato'].dropna().unique().tolist()
+df_applicants_details = utils.buscar_detalhes_candidatos(ids_necessarios)
+
+df_prospects['codigo_candidato'] = df_prospects['codigo_candidato'].astype(str)
+if not df_applicants_details.empty:
+    df_applicants_details['codigo_candidato'] = df_applicants_details['codigo_candidato'].astype(str)
+    if 'nome' in df_applicants_details.columns:
+        df_applicants_details.rename(columns={'nome': 'nome_candidato'}, inplace=True)
+df_mestre = pd.merge(df_prospects, df_vagas, on='codigo_vaga', how='left')
+if not df_applicants_details.empty:
+    df_mestre = pd.merge(df_mestre, df_applicants_details, on='codigo_candidato', how='left')
+
+colunas_perfil_vaga = [col for col in df_mestre.columns if col.startswith('perfil_vaga_')]
+for col in colunas_perfil_vaga: df_mestre[col] = df_mestre[col].fillna('').astype(str)
+df_mestre['texto_vaga_combinado'] = df_mestre[colunas_perfil_vaga].apply(lambda x: ' '.join(x), axis=1)
+df_mestre['texto_candidato_combinado'] = df_mestre['candidato_texto_completo'].fillna('')
+df_mestre['texto_completo'] = df_mestre['texto_vaga_combinado'] + ' ' + df_mestre['texto_candidato_combinado']
+positivos_keywords = ['contratado', 'aprovado', 'documentação', 'encaminhado ao requisitante']
+df_mestre['status_final_lower'] = df_mestre['status_final'].astype(str).str.lower()
+df_mestre['target'] = df_mestre['status_final_lower'].apply(lambda x: 1 if any(k in x for k in positivos_keywords) else 0)
+df_treino = df_mestre[df_mestre['status_final'] != 'N/A'].dropna(subset=['texto_completo']).copy()
+
+print(f"Total de {len(df_treino)} registros válidos para o treinamento.")
+print(f"Distribuição do Alvo: \n{df_treino['target'].value_counts(normalize=True)}")
+
+print("\n--- Etapa 2: Treinando o Modelo de Machine Learning ---")
+X = df_treino[['texto_completo']]
+y = df_treino['target']
+X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+preprocessor = ColumnTransformer(transformers=[('tfidf', TfidfVectorizer(stop_words='english', max_features=2000, ngram_range=(1, 2)), 'texto_completo')], remainder='drop')
+pipeline = Pipeline([
+    ('preprocessor', preprocessor),
+    ('clf', LogisticRegression(random_state=42, class_weight='balanced', solver='liblinear'))
+])
+pipeline.fit(X_train, y_train)
+
+print("\n--- Etapa 3: Salvando o Modelo Treinado ---")
+joblib.dump(pipeline, MODELO_FILENAME)
+print(f"\nTreinamento concluído! Modelo salvo como '{MODELO_FILENAME}'.")
+print("Faça o upload deste arquivo para o seu repositório no GitHub.")
