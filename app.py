@@ -6,6 +6,7 @@ import joblib
 import utils
 import json
 
+# ... (Todo o início do arquivo, incluindo as funções, permanece o mesmo) ...
 # --- FUNÇÃO PARA CARREGAR O MODELO PRÉ-TREINADO ---
 @st.cache_resource
 def carregar_modelo_treinado():
@@ -14,16 +15,13 @@ def carregar_modelo_treinado():
         modelo = joblib.load("modelo_recrutamento.joblib")
         return modelo
     except FileNotFoundError:
-        st.error("Arquivo 'modelo_recrutamento.joblib' não encontrado. Certifique-se de que ele foi gerado pelo 'train.py' e está no repositório.")
+        st.error("Arquivo 'modelo_recrutamento.joblib' não encontrado.")
         return None
 
 # --- FUNÇÃO PARA CARREGAR A BASE COMPLETA DE CANDIDATOS ---
 @st.cache_data
 def carregar_candidatos_completos():
-    """
-    Carrega e prepara a base completa de candidatos de forma robusta,
-    lendo o arquivo linha por linha para ignorar JSONs malformados.
-    """
+    """Carrega e prepara a base de candidatos de forma robusta."""
     data = []
     erros = 0
     with open(utils.NDJSON_FILENAME, 'r', encoding='utf-8') as f:
@@ -32,24 +30,19 @@ def carregar_candidatos_completos():
                 data.append(json.loads(line))
             except json.JSONDecodeError:
                 erros += 1
-                continue # Pula a linha com erro e continua para a próxima
-    
+                continue
     if erros > 0:
-        st.warning(f"Atenção: {erros} registro(s) de candidatos foram ignorados devido a erros de formatação no arquivo de dados.")
-
+        st.warning(f"Atenção: {erros} registro(s) de candidatos foram ignorados devido a erros de formatação.")
     if not data:
         st.error("Nenhum registro de candidato pôde ser carregado.")
         return pd.DataFrame()
-
     df = pd.DataFrame(data)
     df_normalized = pd.json_normalize(df.to_dict('records'), sep='_')
-    
     coluna_nome = 'informacoes_pessoais_dados_pessoais_nome_completo'
     if coluna_nome in df_normalized.columns:
         df_normalized.rename(columns={coluna_nome: 'nome_candidato'}, inplace=True)
     else:
         df_normalized['nome_candidato'] = 'Nome não encontrado'
-        
     df_normalized['codigo_candidato'] = df_normalized['codigo_candidato'].astype(str)
     return df_normalized
 
@@ -106,6 +99,7 @@ def gerar_analise_comparativa(vaga, relatorios, api_key):
     except Exception as e:
         return f"Ocorreu um erro ao gerar a análise comparativa: {e}"
 
+
 # --- Configuração da Página e Carregamento de Dados ---
 st.set_page_config(page_title="Decision - Assistente de Recrutamento IA", page_icon="✨", layout="wide")
 
@@ -157,7 +151,6 @@ if dados_carregados_com_sucesso:
                     if not df_detalhes.empty:
                         vaga_selecionada_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
                         perfil_vaga_texto = vaga_selecionada_data['perfil_vaga_texto']
-                        
                         text_cols = ['informacoes_profissionais_resumo_profissional', 'informacoes_profissionais_conhecimentos', 'cv_pt', 'cv_en']
                         for col in text_cols:
                             if col not in df_detalhes.columns: df_detalhes[col] = ''
@@ -172,11 +165,20 @@ if dados_carregados_com_sucesso:
             st.subheader("Candidatos Recomendados (Anônimo)")
             df_para_editar = st.session_state.df_analise_resultado[['codigo_candidato', 'score']].copy()
             df_para_editar['selecionar'] = False
+            
+            # --- CORREÇÃO FINAL AQUI ---
             df_editado = st.data_editor(
                 df_para_editar,
-                column_config={"selecionar": st.column_config.CheckboxColumn("Selecionar"), "codigo_candidato": "ID do Candidato", "score": st.column_config.ProgressColumn("Score (%)")},
+                column_config={
+                    "selecionar": st.column_config.CheckboxColumn("Selecionar"), 
+                    # Garante que a coluna de ID seja exibida como texto
+                    "codigo_candidato": st.column_config.TextColumn("ID do Candidato"), 
+                    "score": st.column_config.ProgressColumn("Score (%)")
+                },
                 hide_index=True, use_container_width=True
             )
+            # --- FIM DA CORREÇÃO ---
+
             if st.button("Confirmar Seleção para Entrevista"):
                 codigos_selecionados = df_editado[df_editado['selecionar']]['codigo_candidato'].tolist()
                 if codigos_selecionados:
@@ -236,7 +238,7 @@ if dados_carregados_com_sucesso:
         if not st.session_state.get('relatorios_finais'):
             st.info("Gere relatórios de entrevista na Etapa 2 para poder fazer a análise comparativa.")
         else:
-            codigo_vaga_atual = st.session_state.vaga_selecionada.get('codigo_vaga')
+            codigo_vaga_atual = st.session_state.vaga_selecionada.get('codigo_vга')
             relatorios_vaga_atual = st.session_state.relatorios_finais.get(codigo_vaga_atual, {})
 
             if not relatorios_vaga_atual:
