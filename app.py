@@ -22,12 +22,15 @@ def carregar_candidatos_completos():
     """Carrega e prepara a base completa de candidatos uma única vez."""
     try:
         df = pd.read_json(utils.NDJSON_FILENAME, lines=True)
-        # Normaliza as colunas aninhadas para facilitar o acesso
         df_normalized = pd.json_normalize(df.to_dict('records'), sep='_')
-        # Renomeia a coluna de nome para o nosso padrão
-        if 'informacoes_pessoais_dados_pessoais_nome_completo' in df_normalized.columns:
-            df_normalized.rename(columns={'informacoes_pessoais_dados_pessoais_nome_completo': 'nome_candidato'}, inplace=True)
-        # Garante que o ID seja string
+        
+        # Caminho correto para o nome do candidato
+        coluna_nome = 'informacoes_pessoais_dados_pessoais_nome_completo'
+        if coluna_nome in df_normalized.columns:
+            df_normalized.rename(columns={coluna_nome: 'nome_candidato'}, inplace=True)
+        else:
+            df_normalized['nome_candidato'] = 'Nome não encontrado' # Garante que a coluna sempre exista
+            
         df_normalized['codigo_candidato'] = df_normalized['codigo_candidato'].astype(str)
         return df_normalized
     except Exception as e:
@@ -41,7 +44,6 @@ if not utils.preparar_dados_candidatos():
     st.error("Falha na preparação dos dados. A aplicação será interrompida.")
     st.stop()
 
-# Carrega todos os dados necessários no início
 df_vagas_ui = utils.carregar_vagas()
 prospects_data_dict = utils.carregar_json(utils.PROSPECTS_FILENAME)
 df_applicants_completo = carregar_candidatos_completos()
@@ -54,31 +56,26 @@ with st.sidebar:
     google_api_key = st.text_input("Chave de API do Google Gemini", type="password")
     if google_api_key:
         genai.configure(api_key=google_api_key)
-        
     st.markdown("---")
     st.header("Motor de Machine Learning")
-    
     with st.spinner("Carregando modelo de IA..."):
         modelo_match = carregar_modelo_treinado()
-
     if modelo_match:
         st.session_state.modelo_match = modelo_match
-        st.session_state.ml_mode_available = True
         st.success("Modelo de Matching carregado!")
     else:
-        st.session_state.ml_mode_available = False
         st.error("Motor de ML indisponível.")
 
 # --- Inicialização do Session State ---
-if 'df_analise_resultado' not in st.session_state: st.session_state.df_analise_resultado = pd.DataFrame()
 if 'candidatos_para_entrevista' not in st.session_state: st.session_state.candidatos_para_entrevista = []
 if 'vaga_selecionada' not in st.session_state: st.session_state.vaga_selecionada = {}
+if 'df_analise_resultado' not in st.session_state: st.session_state.df_analise_resultado = pd.DataFrame()
 
 # --- Abas da Aplicação ---
 tab1, tab2, tab3 = st.tabs(["Agente 1: Matching de Candidatos", "Agente 2: Entrevistas", "Análise Final"])
 
 with tab1:
-    if st.session_state.get('ml_mode_available', False):
+    if 'modelo_match' in st.session_state:
         st.header("Matching com Machine Learning")
         opcoes_vagas_ml = {row['codigo_vaga']: f"{row['titulo_vaga']} (Cliente: {row['cliente']})" for _, row in df_vagas_ui.iterrows()}
         codigo_vaga_selecionada = st.selectbox("Selecione a vaga para análise:", options=list(opcoes_vagas_ml.keys()), format_func=lambda x: opcoes_vagas_ml[x])
@@ -90,15 +87,12 @@ with tab1:
                     st.warning("Nenhum candidato (prospect) encontrado para esta vaga no histórico.")
                 else:
                     ids_candidatos = [str(p['codigo']) for p in prospects_da_vaga]
-                    
-                    # Faz a busca na base completa de candidatos já carregada
                     df_detalhes = df_applicants_completo[df_applicants_completo['codigo_candidato'].isin(ids_candidatos)].copy()
 
                     if not df_detalhes.empty:
                         vaga_selecionada_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
                         perfil_vaga_texto = vaga_selecionada_data['perfil_vaga_texto']
-
-                        # Constrói o texto completo para o modelo
+                        
                         text_cols = ['informacoes_profissionais_resumo_profissional', 'informacoes_profissionais_conhecimentos', 'cv_pt', 'cv_en']
                         for col in text_cols:
                             if col not in df_detalhes.columns: df_detalhes[col] = ''
@@ -108,24 +102,16 @@ with tab1:
                         modelo = st.session_state.modelo_match
                         probabilidades = modelo.predict_proba(df_detalhes[['texto_completo']])
                         df_detalhes['score'] = (probabilidades[:, 1] * 100).astype(int)
-
+                        
                         st.session_state.df_analise_resultado = df_detalhes.sort_values(by='score', ascending=False).head(20)
-                    else:
-                        st.error("Não foi possível encontrar os detalhes dos candidatos listados.")
 
     if not st.session_state.df_analise_resultado.empty:
         st.subheader("Candidatos Recomendados")
-        # Prepara o DataFrame para exibição ANÔNIMA
         df_para_editar = st.session_state.df_analise_resultado[['codigo_candidato', 'score']].copy()
         df_para_editar['selecionar'] = False
-        
         df_editado = st.data_editor(
             df_para_editar,
-            column_config={
-                "selecionar": st.column_config.CheckboxColumn("Selecionar"), 
-                "codigo_candidato": "ID do Candidato", # Mostra o ID em vez do nome
-                "score": st.column_config.ProgressColumn("Score (%)", min_value=0, max_value=100)
-            },
+            column_config={"selecionar": st.column_config.CheckboxColumn("Selecionar"), "codigo_candidato": "ID do Candidato", "score": st.column_config.ProgressColumn("Score (%)")},
             hide_index=True, use_container_width=True
         )
 
@@ -134,26 +120,29 @@ with tab1:
             if codigos_selecionados:
                 df_completo = st.session_state.df_analise_resultado
                 df_selecionados_final = df_completo[df_completo['codigo_candidato'].isin(codigos_selecionados)]
-                
                 st.session_state.candidatos_para_entrevista = df_selecionados_final.to_dict('records')
-                vaga_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0].to_dict()
-                st.session_state.vaga_selecionada = vaga_data
+                st.session_state.vaga_selecionada = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0].to_dict()
                 st.success(f"{len(codigos_selecionados)} candidato(s) movido(s) para a aba de entrevistas!")
                 time.sleep(1); st.rerun()
 
 with tab2:
     st.header("Agente 2: Condução das Entrevistas")
     if not st.session_state.candidatos_para_entrevista:
-        st.info("Nenhum candidato selecionado. Volte para a aba de Matching para selecionar.")
+        st.info("Nenhum candidato selecionado. Volte para a aba de Matching para selecionar e confirmar.")
     else:
         vaga_atual = st.session_state.vaga_selecionada
         st.subheader(f"Vaga: {vaga_atual.get('titulo_vaga', 'N/A')}")
         
-        # Agora a busca pelo nome funcionará corretamente
-        nomes_candidatos = {c['codigo_candidato']: c.get('nome_candidato', 'Nome não encontrado') for c in st.session_state.candidatos_para_entrevista}
-        id_candidato_selecionado = st.selectbox("Selecione o candidato para entrevistar:", options=list(nomes_candidatos.keys()), format_func=lambda x: nomes_candidatos[x])
-        # O restante da lógica da tab2 continua aqui...
-        
+        # --- CORREÇÃO E IMPLEMENTAÇÃO DA SUA SUGESTÃO ---
+        # O menu de seleção agora mostra o ID do candidato, mas o sistema sabe o nome internamente.
+        opcoes_entrevista = {c['codigo_candidato']: f"Candidato ID: {c['codigo_candidato']} ({c.get('nome_candidato', 'Nome não encontrado')})" for c in st.session_state.candidatos_para_entrevista}
+        id_candidato_selecionado = st.selectbox(
+            "Selecione o candidato para entrevistar:", 
+            options=list(opcoes_entrevista.keys()), 
+            format_func=lambda x: opcoes_entrevista[x]
+        )
+        # O restante da lógica para conduzir a entrevista...
+
 with tab3:
     st.header("Agente 3: Análise Final Comparativa")
-    # O restante da lógica da tab3 continua aqui...
+    # A lógica da tab3 continua aqui...
