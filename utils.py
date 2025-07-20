@@ -4,7 +4,7 @@ import json
 import os
 import requests
 from pathlib import Path
-import duckdb # <--- LINHA ADICIONADA
+import duckdb
 
 # --- Constantes de Arquivos e URLs ---
 DATA_DIR = Path("./data")
@@ -18,9 +18,7 @@ PROSPECTS_FILENAME = DATA_DIR / "prospects.json"
 
 # --- Funções de Preparação e Download de Dados ---
 def preparar_dados_candidatos():
-    """
-    Garante que todos os arquivos de dados necessários estejam disponíveis para o app Streamlit.
-    """
+    """Garante que todos os arquivos de dados necessários estejam disponíveis para o app Streamlit."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     baixar_arquivo_se_nao_existir(VAGAS_JSON_URL, VAGAS_FILENAME)
     baixar_arquivo_se_nao_existir(PROSPECTS_JSON_URL, PROSPECTS_FILENAME)
@@ -32,8 +30,7 @@ def preparar_dados_candidatos():
         st.info(f"Primeiro uso: Convertendo '{RAW_APPLICANTS_FILENAME.name}' para um formato otimizado...")
         with st.spinner("Isso pode levar um momento, mas só acontecerá uma vez."):
             try:
-                with open(RAW_APPLICANTS_FILENAME, 'r', encoding='utf-8') as f_in:
-                    data = json.load(f_in)
+                with open(RAW_APPLICANTS_FILENAME, 'r', encoding='utf-8') as f_in: data = json.load(f_in)
                 with open(NDJSON_FILENAME, 'w', encoding='utf-8') as f_out:
                     for codigo, candidato_data in data.items():
                         candidato_data['codigo_candidato'] = codigo
@@ -91,10 +88,13 @@ def buscar_detalhes_candidatos(codigos_candidatos):
     """Busca detalhes de uma lista de candidatos usando DuckDB para performance."""
     if not codigos_candidatos: return pd.DataFrame()
     codigos_str = ", ".join([f"'{c}'" for c in codigos_candidatos])
+    
+    # --- CORREÇÃO DEFINITIVA DA QUERY ---
+    # O caminho para o nome completo foi corrigido para o nível correto do JSON.
     query = f"""
     SELECT
         codigo_candidato,
-        informacoes_pessoais ->> 'nome_completo' AS nome,
+        informacoes_pessoais -> 'dados_pessoais' ->> 'nome_completo' AS nome,
         CONCAT_WS(' ',
             informacoes_profissionais ->> 'resumo_profissional',
             informacoes_profissionais ->> 'conhecimentos',
@@ -108,5 +108,6 @@ def buscar_detalhes_candidatos(codigos_candidatos):
         with duckdb.connect(database=':memory:', read_only=False) as con:
             return con.execute(query).fetchdf()
     except Exception as e:
+        # No app Streamlit, mostraríamos um erro. No script de treino, é melhor parar.
         print(f"Erro ao consultar o arquivo de candidatos com DuckDB: {e}")
         return pd.DataFrame()
