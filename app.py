@@ -5,8 +5,6 @@ import time
 import joblib
 import utils
 import json
-import shap
-import matplotlib.pyplot as plt
 
 # --- FUNÇÃO PARA CARREGAR O MODELO PRÉ-TREINADO ---
 @st.cache_resource
@@ -73,10 +71,26 @@ def gerar_relatorio_final(vaga, candidato, historico_chat, api_key):
     except Exception as e:
         return f"Ocorreu um erro ao gerar o relatório: {e}"
 
+def gerar_analise_comparativa(vaga, relatorios, api_key):
+    if not api_key: return "Chave de API não configurada."
+    cliente = vaga.get('cliente', 'empresa contratante')
+    prompt = f"""
+    Você é um Diretor de Recrutamento da Decision. Crie um parecer final para apresentar ao cliente '{cliente}'.
+    Analise os relatórios dos finalistas para a vaga de {vaga.get('titulo_vaga', 'N/A')}.
+    **Relatórios:**\n{relatorios}\n
+    **Sua Tarefa:** Crie um ranking e escreva um parecer final justificando a recomendação do candidato ideal.
+    """
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Ocorreu um erro ao gerar a análise comparativa: {e}"
+
 # --- Configuração da Página e Carregamento de Dados ---
 st.set_page_config(page_title="Decision - Assistente de Recrutamento IA", page_icon="✨", layout="wide")
 if not utils.preparar_dados_candidatos():
-    st.error("Falha na preparação dos dados. A aplicação será interrompida.")
+    st.error("Falha na preparação dos arquivos de dados. A aplicação será interrompida.")
     st.stop()
 
 df_vagas_ui = utils.carregar_vagas()
@@ -84,7 +98,9 @@ prospects_data_dict = utils.carregar_json(utils.PROSPECTS_FILENAME)
 df_applicants_completo = carregar_candidatos_completos()
 modelo_match = carregar_modelo_treinado()
 
-if all(obj is not None for obj in [df_vagas_ui, prospects_data_dict, df_applicants_completo, modelo_match]):
+dados_carregados_com_sucesso = all(obj is not None for obj in [df_vagas_ui, prospects_data_dict, df_applicants_completo, modelo_match])
+
+if dados_carregados_com_sucesso:
     st.title("✨ Assistente de Recrutamento da Decision")
 
     with st.sidebar:
@@ -97,68 +113,60 @@ if all(obj is not None for obj in [df_vagas_ui, prospects_data_dict, df_applican
 
     if 'df_analise_resultado' not in st.session_state: st.session_state.df_analise_resultado = pd.DataFrame()
     if 'candidatos_para_entrevista' not in st.session_state: st.session_state.candidatos_para_entrevista = []
+    if 'vaga_selecionada' not in st.session_state: st.session_state.vaga_selecionada = {}
     if "messages" not in st.session_state: st.session_state.messages = {}
     if "relatorios_finais" not in st.session_state: st.session_state.relatorios_finais = {}
-    if "vaga_selecionada" not in st.session_state: st.session_state.vaga_selecionada = {}
 
     tab1, tab2, tab3 = st.tabs(["Agente 1: Matching", "Agente 2: Entrevistas", "Análise Final"])
 
+    # --- LÓGICA COMPLETA DA ABA 1 ---
     with tab1:
         st.header("Matching com Machine Learning")
-        opcoes_vagas = {row['codigo_vaga']: f"{row['titulo_vaga']} ({row['cliente']})" for _, row in df_vagas_ui.iterrows()}
-        codigo_vaga_selecionada = st.selectbox("Selecione a vaga:", options=list(opcoes_vagas.keys()), format_func=lambda x: opcoes_vagas[x])
+        opcoes_vagas_ml = {row['codigo_vaga']: f"{row['titulo_vaga']} (Cliente: {row['cliente']})" for _, row in df_vagas_ui.iterrows()}
+        codigo_vaga_selecionada = st.selectbox("Selecione a vaga para análise:", options=list(opcoes_vagas_ml.keys()), format_func=lambda x: opcoes_vagas_ml[x])
 
-        if st.button("Analisar Candidatos", type="primary"):
+        if st.button("Analisar Candidatos com Machine Learning", type="primary"):
             with st.spinner("Analisando candidatos..."):
-                prospects = prospects_data_dict.get(codigo_vaga_selecionada, {}).get('prospects', [])
-                if prospects:
-                    ids = [str(p['codigo']) for p in prospects]
-                    df_detalhes = df_applicants_completo[df_applicants_completo['codigo_candidato'].isin(ids)].copy()
+                prospects_da_vaga = prospects_data_dict.get(codigo_vaga_selecionada, {}).get('prospects', [])
+                if not prospects_da_vaga:
+                    st.warning("Nenhum candidato (prospect) encontrado para esta vaga no histórico.")
+                else:
+                    ids_candidatos = [str(p['codigo']) for p in prospects_da_vaga]
+                    df_detalhes = df_applicants_completo[df_applicants_completo['codigo_candidato'].isin(ids_candidatos)].copy()
+
                     if not df_detalhes.empty:
-                        vaga_texto = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]['perfil_vaga_texto']
+                        vaga_selecionada_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
+                        perfil_vaga_texto = vaga_selecionada_data['perfil_vaga_texto']
                         text_cols = ['informacoes_profissionais_resumo_profissional', 'informacoes_profissionais_conhecimentos', 'cv_pt', 'cv_en']
                         for col in text_cols:
                             if col not in df_detalhes.columns: df_detalhes[col] = ''
                         df_detalhes['candidato_texto_completo'] = df_detalhes[text_cols].fillna('').astype(str).agg(' '.join, axis=1)
-                        df_detalhes['texto_completo'] = vaga_texto + ' ' + df_detalhes['candidato_texto_completo']
-                        probs = modelo_match.predict_proba(df_detalhes[['texto_completo']])
-                        df_detalhes['score'] = (probs[:, 1] * 100).astype(int)
+                        df_detalhes['texto_completo'] = perfil_vaga_texto + ' ' + df_detalhes['candidato_texto_completo']
+                        
+                        probabilidades = modelo_match.predict_proba(df_detalhes[['texto_completo']])
+                        df_detalhes['score'] = (probabilidades[:, 1] * 100).astype(int)
                         st.session_state.df_analise_resultado = df_detalhes.sort_values(by='score', ascending=False).head(20)
 
         if not st.session_state.df_analise_resultado.empty:
-            st.subheader("Candidatos Recomendados")
-            df_para_editar = st.session_state.df_analise_resultado[['codigo_candidato', 'nome_candidato', 'score']].copy()
+            st.subheader("Candidatos Recomendados (Anônimo)")
+            df_para_editar = st.session_state.df_analise_resultado[['codigo_candidato', 'score']].copy()
             df_para_editar['selecionar'] = False
-            df_editado = st.data_editor(df_para_editar, column_config={"selecionar": st.column_config.CheckboxColumn("Selecionar"), "codigo_candidato": None, "nome_candidato": "Nome do Candidato", "score": st.column_config.ProgressColumn("Score (%)")}, hide_index=True)
-            if st.button("Confirmar para Entrevista"):
-                selecionados = df_editado[df_editado['selecionar']]['codigo_candidato'].tolist()
-                if selecionados:
-                    df_final = st.session_state.df_analise_resultado[st.session_state.df_analise_resultado['codigo_candidato'].isin(selecionados)]
-                    st.session_state.candidatos_para_entrevista = df_final.to_dict('records')
+            df_editado = st.data_editor(
+                df_para_editar,
+                column_config={"selecionar": st.column_config.CheckboxColumn("Selecionar"), "codigo_candidato": "ID do Candidato", "score": st.column_config.ProgressColumn("Score (%)")},
+                hide_index=True, use_container_width=True
+            )
+            if st.button("Confirmar Seleção para Entrevista"):
+                codigos_selecionados = df_editado[df_editado['selecionar']]['codigo_candidato'].tolist()
+                if codigos_selecionados:
+                    df_completo = st.session_state.df_analise_resultado
+                    df_selecionados_final = df_completo[df_completo['codigo_candidato'].isin(codigos_selecionados)]
+                    st.session_state.candidatos_para_entrevista = df_selecionados_final.to_dict('records')
                     st.session_state.vaga_selecionada = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0].to_dict()
-                    st.success(f"{len(selecionados)} candidato(s) movido(s) para a aba de entrevistas!")
+                    st.success(f"{len(codigos_selecionados)} candidato(s) movido(s) para a aba de entrevistas!")
                     time.sleep(1); st.rerun()
 
-            with st.expander("🔍 Entenda a Pontuação do Melhor Candidato (Análise SHAP)"):
-                try:
-                    df_resultado = st.session_state.df_analise_resultado
-                    melhor_candidato_texto = df_resultado.head(1)[['texto_completo']]
-                    
-                    preprocessor = modelo_match.named_steps['preprocessor']
-                    classifier = modelo_match.named_steps['clf']
-                    
-                    explainer = shap.Explainer(classifier, preprocessor.transform(df_resultado[['texto_completo']]))
-                    shap_values = explainer(preprocessor.transform(melhor_candidato_texto))
-                    
-                    st.write(f"Análise para o Candidato ID: **{df_resultado.head(1)['codigo_candidato'].iloc[0]}**")
-                    st.write("Palavras que mais influenciaram na pontuação (vermelho aumenta, azul diminui).")
-                    
-                    shap.plots.text(shap_values)
-                    st.pyplot(bbox_inches='tight')
-                    plt.close()
-                except Exception as e:
-                    st.warning(f"Não foi possível gerar a análise SHAP: {e}")
-
+    # --- LÓGICA COMPLETA DA ABA 2 ---
     with tab2:
         st.header("Agente 2: Condução das Entrevistas")
         if not st.session_state.candidatos_para_entrevista:
@@ -182,16 +190,11 @@ if all(obj is not None for obj in [df_vagas_ui, prospects_data_dict, df_applican
 
             if prompt := st.chat_input("Digite a resposta do candidato aqui..."):
                 st.session_state.messages[id_candidato_selecionado].append({"role": "user", "content": prompt})
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-
                 with st.spinner("IA está formulando a próxima pergunta..."):
                     historico_formatado = "\n".join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.messages[id_candidato_selecionado]])
                     proxima_pergunta = gerar_proxima_pergunta(vaga_atual, candidato_atual, historico_formatado, google_api_key)
-                    
-                    with st.chat_message("assistant"):
-                        st.markdown(proxima_pergunta)
                     st.session_state.messages[id_candidato_selecionado].append({"role": "assistant", "content": proxima_pergunta})
+                st.rerun()
             
             if st.button(f"🏁 Finalizar Entrevista e Gerar Relatório para {candidato_atual.get('nome_candidato', 'este candidato')}"):
                 with st.spinner("Analisando entrevista e gerando relatório..."):
@@ -203,6 +206,29 @@ if all(obj is not None for obj in [df_vagas_ui, prospects_data_dict, df_applican
                     st.success("Relatório gerado! Verifique a aba 'Análise Final'.")
                     st.markdown(relatorio)
 
+    # --- LÓGICA COMPLETA DA ABA 3 ---
     with tab3:
         st.header("Agente 3: Análise Final Comparativa")
-        # A lógica da tab3 continua aqui...
+        if not st.session_state.get('relatorios_finais'):
+            st.info("Gere relatórios de entrevista na Etapa 2 para poder fazer a análise comparativa.")
+        else:
+            vaga_selecionada = st.session_state.get('vaga_selecionada', {})
+            codigo_vaga_atual = vaga_selecionada.get('codigo_vaga')
+            relatorios_vaga_atual = st.session_state.relatorios_finais.get(codigo_vaga_atual, {})
+
+            if not relatorios_vaga_atual:
+                st.info("Nenhum relatório de entrevista foi gerado para esta vaga ainda.")
+            else:
+                st.subheader(f"Finalistas para a vaga: {vaga_selecionada.get('titulo_vaga')}")
+                opcoes_entrevista = {c['codigo_candidato']: f"ID: {c['codigo_candidato']} ({c.get('nome_candidato', 'N/A')})" for c in st.session_state.candidatos_para_entrevista}
+                for id_candidato, relatorio in relatorios_vaga_atual.items():
+                    nome_cand = opcoes_entrevista.get(id_candidato, f"ID: {id_candidato}")
+                    with st.expander(f"Ver relatório de {nome_cand}"):
+                        st.markdown(relatorio)
+                if len(relatorios_vaga_atual) >= 2:
+                    if st.button("Gerar Análise Comparativa Final com IA", type="primary"):
+                        with st.spinner("IA está analisando todos os finalistas..."):
+                            todos_relatorios = "\n\n---\n\n".join(relatorios_vaga_atual.values())
+                            analise_final = gerar_analise_comparativa(vaga_selecionada, todos_relatorios, google_api_key)
+                            st.subheader("Parecer Final do Assistente de IA")
+                            st.markdown(analise_final)
