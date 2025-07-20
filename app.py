@@ -48,36 +48,30 @@ def carregar_candidatos_completos():
 # --- Configuração da Página e Carregamento de Dados ---
 st.set_page_config(page_title="Decision - Assistente de Recrutamento IA", page_icon="✨", layout="wide")
 
-# Prepara os arquivos de dados (download, conversão)
 if not utils.preparar_dados_candidatos():
     st.error("Falha na preparação dos arquivos de dados. A aplicação será interrompida.")
     st.stop()
 
-# Carrega os dados essenciais em memória
 df_vagas_ui = utils.carregar_vagas()
 prospects_data_dict = utils.carregar_json(utils.PROSPECTS_FILENAME)
 df_applicants_completo = carregar_candidatos_completos()
 modelo_match = carregar_modelo_treinado()
 
-# --- VERIFICAÇÃO DE INTEGRIDADE DOS DADOS CARREGADOS ---
 dados_carregados_com_sucesso = True
 if df_vagas_ui is None or df_vagas_ui.empty:
-    st.error("Falha ao carregar os dados das vagas (`vagas.json`). A aplicação não pode continuar.")
+    st.error("Falha ao carregar os dados das vagas (`vagas.json`).")
     dados_carregados_com_sucesso = False
-
 if prospects_data_dict is None:
-    st.error("Falha ao carregar os dados dos prospects (`prospects.json`). A aplicação não pode continuar.")
+    st.error("Falha ao carregar os dados dos prospects (`prospects.json`).")
     dados_carregados_com_sucesso = False
-
 if df_applicants_completo.empty:
-    st.error("Falha ao carregar os dados dos candidatos (`applicants.nd.json`). A aplicação não pode continuar.")
+    st.error("Falha ao carregar os dados dos candidatos (`applicants.nd.json`).")
     dados_carregados_com_sucesso = False
-
 if modelo_match is None:
     st.error("Falha ao carregar o modelo de Machine Learning (`modelo_recrutamento.joblib`).")
     dados_carregados_com_sucesso = False
 
-# --- Início do App (só executa se os dados estiverem OK) ---
+# --- Início do App ---
 if dados_carregados_com_sucesso:
     st.title("✨ Assistente de Recrutamento da Decision")
 
@@ -90,7 +84,6 @@ if dados_carregados_com_sucesso:
         st.header("Motor de Machine Learning")
         st.success("Modelo de Matching carregado!")
 
-    # Inicialização do Session State
     if 'df_analise_resultado' not in st.session_state: st.session_state.df_analise_resultado = pd.DataFrame()
     if 'candidatos_para_entrevista' not in st.session_state: st.session_state.candidatos_para_entrevista = []
     if 'vaga_selecionada' not in st.session_state: st.session_state.vaga_selecionada = {}
@@ -103,5 +96,53 @@ if dados_carregados_com_sucesso:
         codigo_vaga_selecionada = st.selectbox("Selecione a vaga para análise:", options=list(opcoes_vagas_ml.keys()), format_func=lambda x: opcoes_vagas_ml[x])
 
         if st.button("Analisar Candidatos com Machine Learning", type="primary"):
-            # A lógica de análise continua aqui...
-            pass # (O restante do seu código da tab1 permanece o mesmo)
+            # --- LÓGICA DE ANÁLISE RESTAURADA ---
+            with st.spinner("Analisando candidatos..."):
+                prospects_da_vaga = prospects_data_dict.get(codigo_vaga_selecionada, {}).get('prospects', [])
+                if not prospects_da_vaga:
+                    st.warning("Nenhum candidato (prospect) encontrado para esta vaga no histórico.")
+                else:
+                    ids_candidatos = [str(p['codigo']) for p in prospects_da_vaga]
+                    df_detalhes = df_applicants_completo[df_applicants_completo['codigo_candidato'].isin(ids_candidatos)].copy()
+
+                    if not df_detalhes.empty:
+                        vaga_selecionada_data = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]
+                        perfil_vaga_texto = vaga_selecionada_data['perfil_vaga_texto']
+                        
+                        text_cols = ['informacoes_profissionais_resumo_profissional', 'informacoes_profissionais_conhecimentos', 'cv_pt', 'cv_en']
+                        for col in text_cols:
+                            if col not in df_detalhes.columns: df_detalhes[col] = ''
+                        df_detalhes['candidato_texto_completo'] = df_detalhes[text_cols].fillna('').astype(str).agg(' '.join, axis=1)
+                        df_detalhes['texto_completo'] = perfil_vaga_texto + ' ' + df_detalhes['candidato_texto_completo']
+                        
+                        probabilidades = modelo_match.predict_proba(df_detalhes[['texto_completo']])
+                        df_detalhes['score'] = (probabilidades[:, 1] * 100).astype(int)
+                        
+                        st.session_state.df_analise_resultado = df_detalhes.sort_values(by='score', ascending=False).head(20)
+
+        # A lógica de exibição permanece a mesma
+        if not st.session_state.df_analise_resultado.empty:
+            st.subheader("Candidatos Recomendados (Anônimo)")
+            df_para_editar = st.session_state.df_analise_resultado[['codigo_candidato', 'score']].copy()
+            df_para_editar['selecionar'] = False
+            df_editado = st.data_editor(
+                df_para_editar,
+                column_config={"selecionar": st.column_config.CheckboxColumn("Selecionar"), "codigo_candidato": "ID do Candidato", "score": st.column_config.ProgressColumn("Score (%)")},
+                hide_index=True, use_container_width=True
+            )
+            if st.button("Confirmar Seleção para Entrevista"):
+                codigos_selecionados = df_editado[df_editado['selecionar']]['codigo_candidato'].tolist()
+                if codigos_selecionados:
+                    df_completo = st.session_state.df_analise_resultado
+                    df_selecionados_final = df_completo[df_completo['codigo_candidato'].isin(codigos_selecionados)]
+                    st.session_state.candidatos_para_entrevista = df_selecionados_final.to_dict('records')
+                    st.session_state.vaga_selecionada = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0].to_dict()
+                    st.success(f"{len(codigos_selecionados)} candidato(s) movido(s) para a aba de entrevistas!")
+                    time.sleep(1); st.rerun()
+
+    with tab2:
+        # Seu código da tab2
+        pass
+    with tab3:
+        # Seu código da tab3
+        pass
