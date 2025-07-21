@@ -5,6 +5,8 @@ import time
 import joblib
 import utils
 import json
+import shap
+import matplotlib.pyplot as plt
 
 # --- FUNÇÕES DE CARREGAMENTO E IA ---
 @st.cache_resource
@@ -14,7 +16,17 @@ def carregar_modelo_treinado():
         modelo = joblib.load("modelo_recrutamento.joblib")
         return modelo
     except FileNotFoundError:
-        st.error("Arquivo 'modelo_recrutamento.joblib' não encontrado.")
+        st.error("Arquivo 'modelo_recrutamento.joblib' não encontrado. Execute o script de treino e faça o upload.")
+        st.stop()
+
+@st.cache_resource
+def carregar_explicador_shap():
+    """Carrega o explicador SHAP a partir do arquivo .joblib."""
+    try:
+        explainer = joblib.load("shap_explainer.joblib")
+        return explainer
+    except FileNotFoundError:
+        st.error("Arquivo 'shap_explainer.joblib' não encontrado. Execute o script de treino e faça o upload.")
         st.stop()
 
 @st.cache_data
@@ -36,6 +48,27 @@ def carregar_candidatos_completos():
         df_normalized['nome_candidato'] = 'Nome não encontrado'
     df_normalized['codigo_candidato'] = df_normalized['codigo_candidato'].astype(str)
     return df_normalized
+
+def exibir_explicacao_shap(explainer, preprocessor, texto_candidato):
+    """Gera e exibe um gráfico de força do SHAP para um único candidato."""
+    try:
+        # 1. Transforma o texto do candidato usando o pré-processador do pipeline
+        texto_transformado = preprocessor.transform(pd.DataFrame([texto_candidato], columns=['texto_completo']))
+        
+        # 2. Calcula os valores SHAP para essa instância específica
+        shap_values = explainer(texto_transformado)
+        
+        # 3. Gera e exibe o gráfico
+        st.subheader("Análise de Contribuição das Palavras-Chave")
+        st.markdown("Este gráfico mostra quais palavras-chave no perfil do candidato mais contribuíram para **aumentar** (em <span style='color:red;'>vermelho</span>) ou **diminuir** (em <span style='color:blue;'>azul</span>) seu score de compatibilidade.", unsafe_allow_html=True)
+        
+        fig, ax = plt.subplots(figsize=(10, 2))
+        shap.plots.force(shap_values, matplotlib=True, show=False)
+        st.pyplot(fig, bbox_inches='tight')
+        plt.close(fig) # Fecha a figura para liberar memória
+    except Exception as e:
+        st.error(f"Ocorreu um erro ao gerar a explicação SHAP: {e}")
+
 
 def gerar_proxima_pergunta(vaga, candidato, historico_chat):
     """Formula a próxima pergunta da entrevista usando a IA Generativa."""
@@ -100,7 +133,7 @@ def gerar_analise_comparativa(vaga, relatorios):
     **Sua Tarefa:** Crie um parecer final em formato markdown. O parecer deve incluir:
     1.  **Ranking dos Candidatos:** Uma lista ordenada do mais recomendado ao menos recomendado.
     2.  **Justificativa da Recomendação Principal:** Um parágrafo explicando por que o candidato número 1 é a melhor escolha para a vaga e para o cliente.
-    3.  **Considerações Adicionais:** Breves comentários sobre os outros candidatos, se relevante.
+    3.  **Considerações Adicionais:** Breves comentários sobre os outros candidatos, if relevante.
     """
     try:
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -113,41 +146,37 @@ def gerar_analise_comparativa(vaga, relatorios):
 # --- CONFIGURAÇÃO INICIAL DO APP ---
 st.set_page_config(page_title="Decision - Assistente de Recrutamento IA", page_icon="✨", layout="wide")
 
-# Prepara os dados (download, conversão) antes de carregar o resto da UI
 if not utils.preparar_dados_candidatos():
     st.error("Falha na preparação dos arquivos de dados. A aplicação não pode continuar.")
     st.stop()
 
-# Carrega todos os dados e o modelo
+# Carrega todos os dados, o modelo e o explicador
 df_vagas_ui = utils.carregar_vagas()
 prospects_data_dict = utils.carregar_json(utils.PROSPECTS_FILENAME)
 df_applicants_completo = carregar_candidatos_completos()
 modelo_match = carregar_modelo_treinado()
+shap_explainer = carregar_explicador_shap() # <-- Carregando o explicador
 
 # Verifica se todos os componentes essenciais foram carregados
-dados_ok = all(obj is not None and not (isinstance(obj, pd.DataFrame) and obj.empty) for obj in [df_vagas_ui, df_applicants_completo]) and prospects_data_dict and modelo_match
+dados_ok = all(obj is not None for obj in [df_vagas_ui, df_applicants_completo, prospects_data_dict, modelo_match, shap_explainer])
 
 if dados_ok:
     st.title("✨ Assistente de Recrutamento da Decision")
 
     with st.sidebar:
         st.header("Configuração Essencial")
-        
-        # --- MELHORIA IMPLEMENTADA ---
-        # Carrega a chave da API a partir dos secrets do Streamlit
         google_api_key = st.secrets.get("GOOGLE_API_KEY")
-
-        # Verifica se a chave foi carregada com sucesso e configura o GenAI
         if google_api_key:
             genai.configure(api_key=google_api_key)
             st.success("API do Google Gemini configurada!")
         else:
-            st.error("Chave de API do Google Gemini não encontrada. Configure-a nos secrets do Streamlit.")
-            st.stop() # Interrompe a execução para evitar erros
+            st.error("Chave de API do Google Gemini não encontrada.")
+            st.stop()
 
         st.markdown("---")
-        st.header("Motor de Machine Learning")
-        st.success("Modelo de Matching carregado!")
+        st.header("Status dos Modelos")
+        st.success("Modelo de Matching ✔️")
+        st.success("Explicador SHAP ✔️")
 
     # Inicializa o session_state
     if 'df_analise_resultado' not in st.session_state: st.session_state.df_analise_resultado = pd.DataFrame()
@@ -156,7 +185,7 @@ if dados_ok:
     if "messages" not in st.session_state: st.session_state.messages = {}
     if "relatorios_finais" not in st.session_state: st.session_state.relatorios_finais = {}
 
-    tab1, tab2, tab3 = st.tabs(["Agente 1: Matching", "Agente 2: Entrevistas", "Análise Final"])
+    tab1, tab2, tab3 = st.tabs(["Agente 1: Matching e Análise", "Agente 2: Entrevistas", "Análise Final"])
 
     with tab1:
         st.header("Matching com Machine Learning")
@@ -165,6 +194,7 @@ if dados_ok:
 
         if st.button("Analisar Candidatos", type="primary"):
             with st.spinner("Analisando candidatos..."):
+                # ... (lógica de cálculo do score, sem alterações)
                 prospects = prospects_data_dict.get(codigo_vaga_selecionada, {}).get('prospects', [])
                 if prospects:
                     ids = [str(p['codigo']) for p in prospects]
@@ -182,11 +212,38 @@ if dados_ok:
                         st.session_state.df_analise_resultado = df_detalhes.sort_values(by='score', ascending=False).head(20)
 
         if not st.session_state.df_analise_resultado.empty:
-            st.subheader("Candidatos Recomendados (Anônimo)")
-            df_para_editar = st.session_state.df_analise_resultado[['codigo_candidato', 'score']].copy()
-            df_para_editar['selecionar'] = False
-            df_editado = st.data_editor(df_para_editar, column_config={"selecionar": st.column_config.CheckboxColumn("Selecionar"), "codigo_candidato": "ID do Candidato", "score": st.column_config.ProgressColumn("Score (%)", min_value=0, max_value=100)}, hide_index=True)
+            st.subheader("Candidatos Recomendados")
+            st.markdown("Marque os candidatos que deseja mover para a fase de entrevistas.")
             
+            df_resultados = st.session_state.df_analise_resultado.copy()
+            
+            # Usando st.data_editor para uma UI mais limpa
+            df_resultados['selecionar'] = False
+            colunas_para_mostrar = ['selecionar', 'codigo_candidato', 'score']
+            df_editado = st.data_editor(
+                df_resultados[colunas_para_mostrar], 
+                column_config={
+                    "selecionar": st.column_config.CheckboxColumn("Selecionar"), 
+                    "codigo_candidato": "ID do Candidato", 
+                    "score": st.column_config.ProgressColumn("Score (%)", min_value=0, max_value=100)
+                }, 
+                hide_index=True,
+                key="data_editor_candidatos"
+            )
+
+            # Expander para a análise SHAP
+            st.subheader("Análise Detalhada do Score")
+            ids_para_analise = df_resultados['codigo_candidato'].tolist()
+            id_candidato_selecionado = st.selectbox("Selecione um candidato para entender seu score:", options=ids_para_analise)
+            
+            if id_candidato_selecionado:
+                candidato_data = df_resultados[df_resultados['codigo_candidato'] == id_candidato_selecionado].iloc[0]
+                exibir_explicacao_shap(
+                    shap_explainer, 
+                    modelo_match.named_steps['preprocessor'], 
+                    candidato_data['texto_completo']
+                )
+
             if st.button("Confirmar para Entrevista"):
                 selecionados = df_editado[df_editado['selecionar']]['codigo_candidato'].tolist()
                 if selecionados:
@@ -197,6 +254,7 @@ if dados_ok:
                     time.sleep(1)
                     st.rerun()
 
+    # ... (O código para as abas 2 e 3 permanece o mesmo) ...
     with tab2:
         st.header("Agente 2: Condução das Entrevistas")
         if not st.session_state.candidatos_para_entrevista:
