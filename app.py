@@ -63,7 +63,7 @@ def exibir_explicacao_shap(explainer, preprocessor, texto_candidato):
         st.subheader("Análise de Contribuição das Palavras-Chave")
         st.markdown("Este gráfico mostra quais palavras-chave no perfil do candidato mais contribuíram para **aumentar** (em <span style='color:red;'>vermelho</span>) ou **diminuir** (em <span style='color:blue;'>azul</span>) seu score de compatibilidade.", unsafe_allow_html=True)
         
-        # CORREÇÃO FINAL: Gerar o gráfico como HTML e renderizar com st.components
+        # Gerar o gráfico como HTML e renderizar com st.components
         plot_html = shap.plots.force(shap_values[0], show=False)
         components.html(plot_html.html(), height=160)
 
@@ -163,8 +163,7 @@ dados_ok = all(obj is not None for obj in [df_vagas_ui, df_applicants_completo, 
 
 if dados_ok:
     st.title("✨ Assistente de Recrutamento da Decision")
-    shap.initjs() # Inicializa o JavaScript do SHAP
-
+    
     with st.sidebar:
         st.header("Configuração Essencial")
         google_api_key = st.secrets.get("GOOGLE_API_KEY")
