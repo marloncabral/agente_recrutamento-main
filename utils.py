@@ -4,7 +4,6 @@ import json
 import os
 import requests
 from pathlib import Path
-import duckdb
 
 # --- Constantes de Arquivos e URLs ---
 DATA_DIR = Path("./data")
@@ -24,8 +23,9 @@ def preparar_dados_candidatos():
     if not baixar_arquivo_se_nao_existir(APPLICANTS_JSON_URL, RAW_APPLICANTS_FILENAME, is_large=True):
         st.error("Não foi possível baixar o arquivo principal de candidatos.")
         return False
+
     if not os.path.exists(NDJSON_FILENAME):
-        st.info(f"Primeiro uso: Convertendo '{RAW_APPLICANTS_FILENAME.name}'...")
+        st.info(f"Primeiro uso: Convertendo '{RAW_APPLICANTS_FILENAME.name}' para um formato otimizado...")
         with st.spinner("Isso pode levar um momento..."):
             try:
                 with open(RAW_APPLICANTS_FILENAME, 'r', encoding='utf-8') as f_in: data = json.load(f_in)
@@ -76,51 +76,3 @@ def carregar_vagas():
         vaga_info = {'codigo_vaga': codigo, 'titulo_vaga': info_basicas.get('titulo_vaga', 'N/A'), 'cliente': info_basicas.get('cliente', 'N/A'), 'perfil_vaga_texto': json.dumps(dados.get('perfil_vaga', {}))}
         vagas_lista.append(vaga_info)
     return pd.DataFrame(vagas_lista)
-
-def buscar_detalhes_candidatos(codigos_candidatos):
-    """Busca detalhes de candidatos usando DuckDB com a query corrigida."""
-    if not isinstance(codigos_candidatos, list) or not codigos_candidatos: return pd.DataFrame()
-    codigos_str = ", ".join([f"'{str(c)}'" for c in codigos_candidatos])
-    
-    query = f"""
-    SELECT
-        codigo_candidato,
-        informacoes_pessoais -> 'dados_pessoais' ->> 'nome_completo' AS nome,
-        CONCAT_WS(' ',
-            informacoes_profissionais ->> 'resumo_profissional',
-            informacoes_profissionais ->> 'conhecimentos',
-            cv_pt,
-            cv_en
-        ) AS candidato_texto_completo
-    FROM read_json_auto('{NDJSON_FILENAME}')
-    WHERE codigo_candidato IN ({codigos_str})
-    """
-    try:
-        with duckdb.connect(database=':memory:', read_only=False) as con:
-            return con.execute(query).fetchdf()
-    except Exception as e:
-        print(f"Erro ao consultar candidatos com DuckDB: {e}")
-        return pd.DataFrame()
-
-@st.cache_data
-def criar_mapeamento_id_nome():
-    """
-    Cria um dicionário que mapeia 'codigo_candidato' para 'nome_candidato'
-    para ser usado nas etapas finais do processo.
-    """
-    mapeamento = {}
-    try:
-        with open(NDJSON_FILENAME, 'r', encoding='utf-8') as f:
-            for line in f:
-                try:
-                    record = json.loads(line)
-                    codigo = record.get('codigo_candidato')
-                    nome = record.get('informacoes_pessoais', {}).get('dados_pessoais', {}).get('nome_completo')
-                    if codigo and nome:
-                        mapeamento[str(codigo)] = nome
-                except json.JSONDecodeError:
-                    continue
-        return mapeamento
-    except FileNotFoundError:
-        st.error(f"Arquivo de mapeamento '{NDJSON_FILENAME}' não encontrado.")
-        return {}
