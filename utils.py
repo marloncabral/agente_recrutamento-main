@@ -6,6 +6,7 @@ import requests
 from pathlib import Path
 import duckdb
 
+# --- Constantes de Arquivos e URLs ---
 DATA_DIR = Path("./data")
 APPLICANTS_JSON_URL = "https://huggingface.co/datasets/Postech7/datathon-fiap/resolve/main/applicants.json"
 VAGAS_JSON_URL = "https://huggingface.co/datasets/Postech7/datathon-fiap/resolve/main/vagas.json"
@@ -16,13 +17,13 @@ VAGAS_FILENAME = DATA_DIR / "vagas.json"
 PROSPECTS_FILENAME = DATA_DIR / "prospects.json"
 
 def preparar_dados_candidatos():
+    """Garante que todos os arquivos de dados necessários estejam disponíveis."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     baixar_arquivo_se_nao_existir(VAGAS_JSON_URL, VAGAS_FILENAME)
     baixar_arquivo_se_nao_existir(PROSPECTS_JSON_URL, PROSPECTS_FILENAME)
     if not baixar_arquivo_se_nao_existir(APPLICANTS_JSON_URL, RAW_APPLICANTS_FILENAME, is_large=True):
         st.error("Não foi possível baixar o arquivo principal de candidatos.")
         return False
-
     if not os.path.exists(NDJSON_FILENAME):
         st.info(f"Primeiro uso: Convertendo '{RAW_APPLICANTS_FILENAME.name}'...")
         with st.spinner("Isso pode levar um momento..."):
@@ -40,6 +41,7 @@ def preparar_dados_candidatos():
     return True
 
 def baixar_arquivo_se_nao_existir(url, nome_arquivo, is_large=False):
+    """Baixa um arquivo da URL se ele não existir."""
     if os.path.exists(nome_arquivo): return True
     st.info(f"Arquivo '{nome_arquivo.name}' não encontrado. Baixando...")
     try:
@@ -58,12 +60,14 @@ def baixar_arquivo_se_nao_existir(url, nome_arquivo, is_large=False):
 
 @st.cache_data
 def carregar_json(caminho_arquivo):
+    """Carrega um arquivo JSON de forma segura."""
     try:
         with open(caminho_arquivo, 'r', encoding='utf-8') as f: return json.load(f)
     except: return None
 
 @st.cache_data
 def carregar_vagas():
+    """Carrega e padroniza os dados das vagas."""
     vagas_data = carregar_json(VAGAS_FILENAME)
     if vagas_data is None: return pd.DataFrame()
     vagas_lista = []
@@ -73,26 +77,25 @@ def carregar_vagas():
         vagas_lista.append(vaga_info)
     return pd.DataFrame(vagas_lista)
 
-def buscar_detalhes_candidatos(codigos_candidatos):
-    if not isinstance(codigos_candidatos, list) or not codigos_candidatos: return pd.DataFrame()
-    codigos_str = ", ".join([f"'{str(c)}'" for c in codigos_candidatos])
-    
-    query = f"""
-    SELECT
-        codigo_candidato,
-        informacoes_pessoais -> 'dados_pessoais' ->> 'nome_completo' AS nome,
-        CONCAT_WS(' ',
-            informacoes_profissionais ->> 'resumo_profissional',
-            informacoes_profissionais ->> 'conhecimentos',
-            cv_pt,
-            cv_en
-        ) AS candidato_texto_completo
-    FROM read_json_auto('{NDJSON_FILENAME}')
-    WHERE codigo_candidato IN ({codigos_str})
+@st.cache_data
+def criar_mapeamento_id_nome():
     """
+    Cria um dicionário que mapeia 'codigo_candidato' para 'nome_candidato'
+    para ser usado nas etapas finais do processo.
+    """
+    mapeamento = {}
     try:
-        with duckdb.connect(database=':memory:', read_only=False) as con:
-            return con.execute(query).fetchdf()
-    except Exception as e:
-        print(f"Erro ao consultar candidatos com DuckDB: {e}")
-        return pd.DataFrame()
+        with open(NDJSON_FILENAME, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    record = json.loads(line)
+                    codigo = record.get('codigo_candidato')
+                    nome = record.get('informacoes_pessoais', {}).get('dados_pessoais', {}).get('nome_completo')
+                    if codigo and nome:
+                        mapeamento[str(codigo)] = nome
+                except json.JSONDecodeError:
+                    continue # Pula linhas malformadas
+        return mapeamento
+    except FileNotFoundError:
+        st.error(f"Arquivo de mapeamento '{NDJSON_FILENAME}' não encontrado.")
+        return {}
