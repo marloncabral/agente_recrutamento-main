@@ -71,7 +71,8 @@ with open(NDJSON_FILENAME, 'r', encoding='utf-8') as f:
     for line in f:
         candidatos_lista.append(json.loads(line))
 df_applicants = pd.json_normalize(candidatos_lista, sep='_')
-df_applicants.rename(columns={'informacoes_pessoais_dados_pessoais_nome_completo': 'nome_candidato'}, inplace=True)
+if 'informacoes_pessoais_dados_pessoais_nome_completo' in df_applicants.columns:
+    df_applicants.rename(columns={'informacoes_pessoais_dados_pessoais_nome_completo': 'nome_candidato'}, inplace=True)
 
 # Processando vagas e prospects
 lista_vagas = [{'codigo_vaga': k, **v} for k, v in vagas_data.items()]
@@ -124,8 +125,6 @@ print("\n--- Etapa 3: Criando o Explicador SHAP ---")
 X_train_transformed = pipeline.named_steps['preprocessor'].transform(X_train)
 
 # 2. Criar o explicador SHAP usando o modelo treinado e os dados transformados
-# Usamos o `masker` para obter os nomes das features (palavras do TF-IDF)
-masker = shap.maskers.Text(pipeline.named_steps['preprocessor'].named_transformers_['tfidf'].build_analyzer())
 explainer = shap.Explainer(pipeline.named_steps['clf'], X_train_transformed, feature_names=pipeline.named_steps['preprocessor'].get_feature_names_out())
 
 print("Explicador SHAP criado com sucesso.")
