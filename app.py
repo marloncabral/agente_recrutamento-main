@@ -7,7 +7,6 @@ import utils
 import json
 import shap
 import matplotlib.pyplot as plt
-import streamlit.components.v1 as components # Import para renderizar HTML
 
 # --- FUNÇÕES DE CARREGAMENTO E IA ---
 @st.cache_resource
@@ -51,7 +50,7 @@ def carregar_candidatos_completos():
     return df_normalized
 
 def exibir_explicacao_shap(explainer, preprocessor, texto_candidato):
-    """Gera e exibe um gráfico de força do SHAP para um único candidato usando HTML."""
+    """Gera e exibe um gráfico de cascata (waterfall) do SHAP."""
     try:
         # 1. Transforma o texto do candidato usando o pré-processador do pipeline
         texto_transformado = preprocessor.transform(pd.DataFrame([texto_candidato], columns=['texto_completo']))
@@ -59,13 +58,14 @@ def exibir_explicacao_shap(explainer, preprocessor, texto_candidato):
         # 2. Calcula os valores SHAP para essa instância específica
         shap_values = explainer(texto_transformado)
         
-        # 3. Gera e exibe o gráfico
+        # 3. Gera e exibe o gráfico de cascata
         st.subheader("Análise de Contribuição das Palavras-Chave")
-        st.markdown("Este gráfico mostra quais palavras-chave no perfil do candidato mais contribuíram para **aumentar** (em <span style='color:red;'>vermelho</span>) ou **diminuir** (em <span style='color:blue;'>azul</span>) seu score de compatibilidade.", unsafe_allow_html=True)
+        st.markdown("Este gráfico mostra como as principais palavras-chave (features) impactaram o score final do candidato, partindo de um score base.")
         
-        # Gerar o gráfico como HTML e renderizar com st.components
-        plot_html = shap.plots.force(shap_values[0], show=False)
-        components.html(plot_html.html(), height=160)
+        fig, ax = plt.subplots(figsize=(10, 6))
+        shap.plots.waterfall(shap_values[0], max_display=14, show=False)
+        st.pyplot(fig, bbox_inches='tight')
+        plt.close(fig) # Fecha a figura para liberar memória
 
     except Exception as e:
         st.error(f"Ocorreu um erro ao gerar a explicação SHAP: {e}")
