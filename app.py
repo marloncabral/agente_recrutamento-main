@@ -33,20 +33,58 @@ def carregar_candidatos_completos():
     df_normalized['codigo_candidato'] = df_normalized['codigo_candidato'].astype(str)
     return df_normalized
 
+# --- FUNÇÕES DE IA GENERATIVA COMPLETAS ---
 def gerar_proxima_pergunta(vaga, candidato, historico_chat, api_key):
-    # ... (Sua função de IA aqui)
-    pass
+    if not api_key: return "Chave de API do Google Gemini não configurada."
+    prompt = f"""
+    Você é um entrevistador de IA. Formule a PRÓXIMA pergunta com base no histórico. Não repita perguntas. Se já fez 5-6 perguntas, finalize a entrevista.
+    Vaga: {vaga.get('titulo_vaga', 'N/A')}
+    Candidato: {candidato.get('nome_candidato', 'N/A')} | {candidato.get('candidato_texto_completo', '')}
+    Histórico: {historico_chat}
+    Sua Ação: Formule a próxima pergunta.
+    """
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Ocorreu um erro na IA: {e}"
 
 def gerar_relatorio_final(vaga, candidato, historico_chat, api_key):
-    # ... (Sua função de IA aqui)
-    pass
+    if not api_key: return "Chave de API não configurada."
+    prompt = f"""
+    Você é um especialista em recrutamento da Decision. Analise a transcrição de uma entrevista e gere um relatório final.
+    **Vaga:** {vaga.get('titulo_vaga', 'N/A')}
+    **Candidato:** {candidato.get('nome_candidato', 'N/A')}
+    **Transcrição:**\n{historico_chat}
+    **Sua Tarefa:** Gere um relatório estruturado em markdown com: ### Relatório Final de Entrevista, 1. Score Geral (0 a 10), 2. Pontos Fortes, 3. Pontos de Atenção, 4. Recomendação Final ("Recomendado", "Recomendado com Ressalvas" ou "Não Recomendado").
+    """
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Ocorreu um erro ao gerar o relatório: {e}"
 
 def gerar_analise_comparativa(vaga, relatorios, api_key):
-    # ... (Sua função de IA aqui)
-    pass
+    if not api_key: return "Chave de API não configurada."
+    cliente = vaga.get('cliente', 'empresa contratante')
+    prompt = f"""
+    Você é um Diretor de Recrutamento da Decision. Crie um parecer final para apresentar ao cliente '{cliente}'.
+    Analise os relatórios dos finalistas para a vaga de {vaga.get('titulo_vaga', 'N/A')}.
+    **Relatórios:**\n{relatorios}\n
+    **Sua Tarefa:** Crie um ranking e escreva um parecer final justificando a recomendação do candidato ideal.
+    """
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Ocorreu um erro ao gerar a análise comparativa: {e}"
 
 # --- CONFIGURAÇÃO INICIAL DO APP ---
 st.set_page_config(page_title="Decision - Assistente de Recrutamento IA", page_icon="✨", layout="wide")
+
 if not utils.preparar_dados_candidatos():
     st.error("Falha na preparação dos dados. A aplicação será interrompida.")
     st.stop()
@@ -120,14 +158,12 @@ if dados_ok:
         else:
             vaga_atual = st.session_state.vaga_selecionada
             st.subheader(f"Vaga: {vaga_atual.get('titulo_vaga', 'N/A')}")
-            
-            # --- MUDANÇA AQUI: Mostra apenas o ID no menu de seleção ---
-            opcoes_entrevista = [c['codigo_candidato'] for c in st.session_state.candidatos_para_entrevista]
-            id_selecionado = st.selectbox("Selecione o ID do candidato para entrevistar:", options=opcoes_entrevista)
+            opcoes = {c['codigo_candidato']: f"ID: {c['codigo_candidato']} ({c.get('nome_candidato', 'N/A')})" for c in st.session_state.candidatos_para_entrevista}
+            id_selecionado = st.selectbox("Selecione o candidato:", options=list(opcoes.keys()), format_func=lambda x: opcoes[x])
             candidato_atual = [c for c in st.session_state.candidatos_para_entrevista if c['codigo_candidato'] == id_selecionado][0]
 
             if id_selecionado not in st.session_state.messages:
-                st.session_state.messages[id_selecionado] = [{"role": "assistant", "content": f"Olá! Sou o assistente de IA. Podemos começar a entrevista com o candidato de ID {id_selecionado}."}]
+                st.session_state.messages[id_selecionado] = [{"role": "assistant", "content": f"Olá! Sou o assistente de IA. Pronto para iniciar a entrevista com **{candidato_atual.get('nome_candidato', 'o candidato')}**. Podemos começar?"}]
 
             for message in st.session_state.messages[id_selecionado]:
                 with st.chat_message(message["role"]):
@@ -141,31 +177,38 @@ if dados_ok:
                     st.session_state.messages[id_selecionado].append({"role": "assistant", "content": proxima_pergunta})
                 st.rerun()
 
-            if st.button(f"🏁 Finalizar Entrevista e Gerar Relatório para o ID {id_selecionado}"):
+            if st.button(f"🏁 Finalizar Entrevista e Gerar Relatório para ID {id_selecionado}"):
                 with st.spinner("Gerando relatório..."):
-                    # (Lógica para gerar e salvar o relatório aqui)
-                    pass
+                    historico_final = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages[id_selecionado]])
+                    relatorio = gerar_relatorio_final(vaga_atual, candidato_atual, historico_final, google_api_key)
+                    if vaga_atual['codigo_vaga'] not in st.session_state.relatorios_finais:
+                        st.session_state.relatorios_finais[vaga_atual['codigo_vaga']] = {}
+                    st.session_state.relatorios_finais[vaga_atual['codigo_vaga']][id_selecionado] = relatorio
+                    st.success("Relatório gerado! Verifique a aba 'Análise Final'.")
+                    st.markdown(relatorio)
 
     with tab3:
         st.header("Agente 3: Análise Final Comparativa")
-        # --- MUDANÇA AQUI: Mostra o ID e o NOME no expander ---
-        if not st.session_state.get('relatorios_finais'):
-            st.info("Nenhum relatório de entrevista foi gerado para esta vaga ainda.")
+        vaga_selecionada = st.session_state.get('vaga_selecionada', {})
+        if not vaga_selecionada:
+            st.info("Selecione uma vaga e finalize entrevistas na Etapa 2 para fazer a análise comparativa.")
         else:
-            vaga_selecionada = st.session_state.get('vaga_selecionada', {})
-            st.subheader(f"Finalistas para a vaga: {vaga_selecionada.get('titulo_vaga')}")
-            
-            relatorios_vaga_atual = st.session_state.relatorios_finais.get(vaga_selecionada.get('codigo_vaga'), {})
-            
-            for id_candidato, relatorio in relatorios_vaga_atual.items():
-                # Busca o nome do candidato na lista original para exibição
-                nome_cand = "Nome não encontrado"
-                for cand in st.session_state.candidatos_para_entrevista:
-                    if cand['codigo_candidato'] == id_candidato:
-                        nome_cand = cand.get('nome_candidato', 'N/A')
-                        break
-                
-                with st.expander(f"Ver relatório de ID: {id_candidato} ({nome_cand})"):
-                    st.markdown(relatorio)
-            
-            # (Lógica do botão de análise comparativa aqui)
+            codigo_vaga_atual = vaga_selecionada.get('codigo_vaga')
+            relatorios_vaga_atual = st.session_state.relatorios_finais.get(codigo_vaga_atual, {})
+            if not relatorios_vaga_atual:
+                st.info("Nenhum relatório de entrevista foi gerado para esta vaga ainda.")
+            else:
+                st.subheader(f"Finalistas para a vaga: {vaga_selecionada.get('titulo_vaga')}")
+                # Cria um mapa de ID para nome para usar no expander
+                mapa_nomes = {c['codigo_candidato']: c.get('nome_candidato', 'N/A') for c in st.session_state.candidatos_para_entrevista}
+                for id_candidato, relatorio in relatorios_vaga_atual.items():
+                    nome_cand = mapa_nomes.get(id_candidato, 'ID não encontrado')
+                    with st.expander(f"Ver relatório de ID: {id_candidato} ({nome_cand})"):
+                        st.markdown(relatorio)
+                if len(relatorios_vaga_atual) >= 2:
+                    if st.button("Gerar Análise Comparativa Final com IA", type="primary"):
+                        with st.spinner("IA está analisando todos os finalistas..."):
+                            todos_relatorios = "\n\n---\n\n".join(relatorios_vaga_atual.values())
+                            analise_final = gerar_analise_comparativa(vaga_selecionada, todos_relatorios, google_api_key)
+                            st.subheader("Parecer Final do Assistente de IA")
+                            st.markdown(analise_final)
