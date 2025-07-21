@@ -50,7 +50,7 @@ def carregar_candidatos_completos():
     return df_normalized
 
 def exibir_explicacao_shap(explainer, preprocessor, texto_candidato):
-    """Gera e exibe um gráfico de cascata (waterfall) do SHAP."""
+    """Gera e exibe um gráfico de cascata (waterfall) do SHAP com nomes de features limpos."""
     try:
         # 1. Transforma o texto do candidato usando o pré-processador do pipeline
         texto_transformado = preprocessor.transform(pd.DataFrame([texto_candidato], columns=['texto_completo']))
@@ -58,12 +58,21 @@ def exibir_explicacao_shap(explainer, preprocessor, texto_candidato):
         # 2. Calcula os valores SHAP para essa instância específica
         shap_values = explainer(texto_transformado)
         
-        # 3. Gera e exibe o gráfico de cascata
+        # --- MELHORIA: Limpeza dos Nomes das Features ---
+        # Cria uma cópia para evitar modificar o objeto original
+        shap_values_copy = shap_values.copy()
+        
+        # Remove o prefixo 'tfidf__' e substitui '_' por espaço
+        cleaned_feature_names = [name.replace('tfidf__', '').replace('_', ' ') for name in shap_values_copy.feature_names]
+        shap_values_copy.feature_names = cleaned_feature_names
+        # ------------------------------------------------
+
+        # 3. Gera e exibe o gráfico de cascata com os nomes limpos
         st.subheader("Análise de Contribuição das Palavras-Chave")
         st.markdown("Este gráfico mostra como as principais palavras-chave (features) impactaram o score final do candidato, partindo de um score base.")
         
         fig, ax = plt.subplots(figsize=(10, 6))
-        shap.plots.waterfall(shap_values[0], max_display=14, show=False)
+        shap.plots.waterfall(shap_values_copy[0], max_display=14, show=False)
         st.pyplot(fig, bbox_inches='tight')
         plt.close(fig) # Fecha a figura para liberar memória
 
