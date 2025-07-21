@@ -76,3 +76,36 @@ def carregar_vagas():
         vaga_info = {'codigo_vaga': codigo, 'titulo_vaga': info_basicas.get('titulo_vaga', 'N/A'), 'cliente': info_basicas.get('cliente', 'N/A'), 'perfil_vaga_texto': json.dumps(dados.get('perfil_vaga', {}))}
         vagas_lista.append(vaga_info)
     return pd.DataFrame(vagas_lista)
+
+# --- NOVA FUNÇÃO OTIMIZADA ---
+def buscar_detalhes_candidatos_por_id(ids_necessarios: list):
+    """
+    Busca detalhes de candidatos específicos no arquivo NDJSON,
+    carregando apenas os registros necessários para economizar memória.
+    """
+    if not os.path.exists(NDJSON_FILENAME):
+        return pd.DataFrame()
+
+    ids_necessarios_set = set(ids_necessarios)
+    candidatos_encontrados = []
+    
+    with open(NDJSON_FILENAME, 'r', encoding='utf-8') as f:
+        for line in f:
+            try:
+                candidato = json.loads(line)
+                if candidato.get('codigo_candidato') in ids_necessarios_set:
+                    candidatos_encontrados.append(candidato)
+            except json.JSONDecodeError:
+                continue
+    
+    if not candidatos_encontrados:
+        return pd.DataFrame()
+
+    df = pd.json_normalize(candidatos_encontrados, sep='_')
+    coluna_nome = 'informacoes_pessoais_dados_pessoais_nome_completo'
+    if coluna_nome in df.columns:
+        df.rename(columns={coluna_nome: 'nome_candidato'}, inplace=True)
+    else:
+        df['nome_candidato'] = 'Nome não encontrado'
+    df['codigo_candidato'] = df['codigo_candidato'].astype(str)
+    return df
