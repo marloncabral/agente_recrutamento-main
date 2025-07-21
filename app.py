@@ -30,26 +30,6 @@ def carregar_explicador_shap():
         st.error("Arquivo 'shap_explainer.joblib' não encontrado. Execute o script de treino e faça o upload.")
         st.stop()
 
-@st.cache_data
-def carregar_candidatos_completos():
-    """Carrega e prepara a base de candidatos de forma robusta."""
-    data = []
-    with open(utils.NDJSON_FILENAME, 'r', encoding='utf-8') as f:
-        for line in f:
-            try:
-                data.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    df = pd.DataFrame(data)
-    df_normalized = pd.json_normalize(df.to_dict('records'), sep='_')
-    coluna_nome = 'informacoes_pessoais_dados_pessoais_nome_completo'
-    if coluna_nome in df_normalized.columns:
-        df_normalized.rename(columns={coluna_nome: 'nome_candidato'}, inplace=True)
-    else:
-        df_normalized['nome_candidato'] = 'Nome não encontrado'
-    df_normalized['codigo_candidato'] = df_normalized['codigo_candidato'].astype(str)
-    return df_normalized
-
 def exibir_explicacao_shap(explainer, preprocessor, texto_candidato):
     """Gera e exibe um gráfico de cascata (waterfall) do SHAP com nomes de features limpos e uma explicação clara."""
     try:
@@ -179,15 +159,14 @@ if not utils.preparar_dados_candidatos():
     st.error("Falha na preparação dos arquivos de dados. A aplicação não pode continuar.")
     st.stop()
 
-# Carrega todos os dados, o modelo e o explicador
+# Carrega os dados e modelos essenciais na inicialização
 df_vagas_ui = utils.carregar_vagas()
 prospects_data_dict = utils.carregar_json(utils.PROSPECTS_FILENAME)
-df_applicants_completo = carregar_candidatos_completos()
 modelo_match = carregar_modelo_treinado()
 shap_explainer = carregar_explicador_shap()
 
-# Verifica se todos os componentes essenciais foram carregados
-dados_ok = all(obj is not None for obj in [df_vagas_ui, df_applicants_completo, prospects_data_dict, modelo_match, shap_explainer])
+# Verifica se os componentes essenciais foram carregados
+dados_ok = all(obj is not None for obj in [df_vagas_ui, prospects_data_dict, modelo_match, shap_explainer])
 
 if dados_ok:
     st.title("✨ Assistente de Recrutamento da Decision")
@@ -226,7 +205,9 @@ if dados_ok:
                 prospects = prospects_data_dict.get(codigo_vaga_selecionada, {}).get('prospects', [])
                 if prospects:
                     ids = [str(p['codigo']) for p in prospects]
-                    df_detalhes = df_applicants_completo[df_applicants_completo['codigo_candidato'].isin(ids)].copy()
+                    # --- MUDANÇA PRINCIPAL: Carregamento sob demanda ---
+                    df_detalhes = utils.buscar_detalhes_candidatos_por_id(ids)
+                    
                     if not df_detalhes.empty:
                         vaga_texto = df_vagas_ui[df_vagas_ui['codigo_vaga'] == codigo_vaga_selecionada].iloc[0]['perfil_vaga_texto']
                         text_cols = ['informacoes_profissionais_resumo_profissional', 'informacoes_profissionais_conhecimentos', 'cv_pt', 'cv_en']
