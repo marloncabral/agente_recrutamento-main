@@ -7,6 +7,7 @@ import utils
 import json
 import shap
 import matplotlib.pyplot as plt
+import streamlit.components.v1 as components # Import para renderizar HTML
 
 # --- FUNÇÕES DE CARREGAMENTO E IA ---
 @st.cache_resource
@@ -50,7 +51,7 @@ def carregar_candidatos_completos():
     return df_normalized
 
 def exibir_explicacao_shap(explainer, preprocessor, texto_candidato):
-    """Gera e exibe um gráfico de força do SHAP para um único candidato."""
+    """Gera e exibe um gráfico de força do SHAP para um único candidato usando HTML."""
     try:
         # 1. Transforma o texto do candidato usando o pré-processador do pipeline
         texto_transformado = preprocessor.transform(pd.DataFrame([texto_candidato], columns=['texto_completo']))
@@ -62,11 +63,10 @@ def exibir_explicacao_shap(explainer, preprocessor, texto_candidato):
         st.subheader("Análise de Contribuição das Palavras-Chave")
         st.markdown("Este gráfico mostra quais palavras-chave no perfil do candidato mais contribuíram para **aumentar** (em <span style='color:red;'>vermelho</span>) ou **diminuir** (em <span style='color:blue;'>azul</span>) seu score de compatibilidade.", unsafe_allow_html=True)
         
-        # CORREÇÃO: Criar figura sem tamanho fixo e usar shap_values[0]
-        fig, ax = plt.subplots()
-        shap.plots.force(shap_values[0], matplotlib=True, show=False)
-        st.pyplot(fig, bbox_inches='tight')
-        plt.close(fig) # Fecha a figura para liberar memória
+        # CORREÇÃO FINAL: Gerar o gráfico como HTML e renderizar com st.components
+        plot_html = shap.plots.force(shap_values[0], show=False)
+        components.html(plot_html.html(), height=160)
+
     except Exception as e:
         st.error(f"Ocorreu um erro ao gerar a explicação SHAP: {e}")
 
@@ -156,13 +156,14 @@ df_vagas_ui = utils.carregar_vagas()
 prospects_data_dict = utils.carregar_json(utils.PROSPECTS_FILENAME)
 df_applicants_completo = carregar_candidatos_completos()
 modelo_match = carregar_modelo_treinado()
-shap_explainer = carregar_explicador_shap() # <-- Carregando o explicador
+shap_explainer = carregar_explicador_shap()
 
 # Verifica se todos os componentes essenciais foram carregados
 dados_ok = all(obj is not None for obj in [df_vagas_ui, df_applicants_completo, prospects_data_dict, modelo_match, shap_explainer])
 
 if dados_ok:
     st.title("✨ Assistente de Recrutamento da Decision")
+    shap.initjs() # Inicializa o JavaScript do SHAP
 
     with st.sidebar:
         st.header("Configuração Essencial")
@@ -195,7 +196,6 @@ if dados_ok:
 
         if st.button("Analisar Candidatos", type="primary"):
             with st.spinner("Analisando candidatos..."):
-                # ... (lógica de cálculo do score, sem alterações)
                 prospects = prospects_data_dict.get(codigo_vaga_selecionada, {}).get('prospects', [])
                 if prospects:
                     ids = [str(p['codigo']) for p in prospects]
@@ -218,7 +218,6 @@ if dados_ok:
             
             df_resultados = st.session_state.df_analise_resultado.copy()
             
-            # Usando st.data_editor para uma UI mais limpa
             df_resultados['selecionar'] = False
             colunas_para_mostrar = ['selecionar', 'codigo_candidato', 'score']
             df_editado = st.data_editor(
@@ -232,7 +231,6 @@ if dados_ok:
                 key="data_editor_candidatos"
             )
 
-            # Expander para a análise SHAP
             st.subheader("Análise Detalhada do Score")
             ids_para_analise = df_resultados['codigo_candidato'].tolist()
             id_candidato_selecionado = st.selectbox("Selecione um candidato para entender seu score:", options=ids_para_analise)
@@ -255,7 +253,6 @@ if dados_ok:
                     time.sleep(1)
                     st.rerun()
 
-    # ... (O código para as abas 2 e 3 permanece o mesmo) ...
     with tab2:
         st.header("Agente 2: Condução das Entrevistas")
         if not st.session_state.candidatos_para_entrevista:
