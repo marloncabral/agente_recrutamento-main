@@ -77,6 +77,31 @@ def carregar_vagas():
         vagas_lista.append(vaga_info)
     return pd.DataFrame(vagas_lista)
 
+def buscar_detalhes_candidatos(codigos_candidatos):
+    """Busca detalhes de candidatos usando DuckDB com a query corrigida."""
+    if not isinstance(codigos_candidatos, list) or not codigos_candidatos: return pd.DataFrame()
+    codigos_str = ", ".join([f"'{str(c)}'" for c in codigos_candidatos])
+    
+    query = f"""
+    SELECT
+        codigo_candidato,
+        informacoes_pessoais -> 'dados_pessoais' ->> 'nome_completo' AS nome,
+        CONCAT_WS(' ',
+            informacoes_profissionais ->> 'resumo_profissional',
+            informacoes_profissionais ->> 'conhecimentos',
+            cv_pt,
+            cv_en
+        ) AS candidato_texto_completo
+    FROM read_json_auto('{NDJSON_FILENAME}')
+    WHERE codigo_candidato IN ({codigos_str})
+    """
+    try:
+        with duckdb.connect(database=':memory:', read_only=False) as con:
+            return con.execute(query).fetchdf()
+    except Exception as e:
+        print(f"Erro ao consultar candidatos com DuckDB: {e}")
+        return pd.DataFrame()
+
 @st.cache_data
 def criar_mapeamento_id_nome():
     """
@@ -94,7 +119,7 @@ def criar_mapeamento_id_nome():
                     if codigo and nome:
                         mapeamento[str(codigo)] = nome
                 except json.JSONDecodeError:
-                    continue # Pula linhas malformadas
+                    continue
         return mapeamento
     except FileNotFoundError:
         st.error(f"Arquivo de mapeamento '{NDJSON_FILENAME}' não encontrado.")
