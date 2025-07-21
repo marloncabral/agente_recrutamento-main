@@ -62,8 +62,9 @@ def exibir_explicacao_shap(explainer, preprocessor, texto_candidato):
         st.subheader("Análise de Contribuição das Palavras-Chave")
         st.markdown("Este gráfico mostra quais palavras-chave no perfil do candidato mais contribuíram para **aumentar** (em <span style='color:red;'>vermelho</span>) ou **diminuir** (em <span style='color:blue;'>azul</span>) seu score de compatibilidade.", unsafe_allow_html=True)
         
-        fig, ax = plt.subplots(figsize=(10, 2))
-        shap.plots.force(shap_values, matplotlib=True, show=False)
+        # CORREÇÃO: Criar figura sem tamanho fixo e usar shap_values[0]
+        fig, ax = plt.subplots()
+        shap.plots.force(shap_values[0], matplotlib=True, show=False)
         st.pyplot(fig, bbox_inches='tight')
         plt.close(fig) # Fecha a figura para liberar memória
     except Exception as e:
