@@ -7,6 +7,7 @@ import utils
 import json
 import shap
 import matplotlib.pyplot as plt
+import numpy as np # Importado para cálculos matemáticos
 
 # --- FUNÇÕES DE CARREGAMENTO E IA ---
 @st.cache_resource
@@ -50,27 +51,49 @@ def carregar_candidatos_completos():
     return df_normalized
 
 def exibir_explicacao_shap(explainer, preprocessor, texto_candidato):
-    """Gera e exibe um gráfico de cascata (waterfall) do SHAP com nomes de features limpos."""
+    """Gera e exibe um gráfico de cascata (waterfall) do SHAP com nomes de features limpos e uma explicação clara."""
     try:
-        # 1. Transforma o texto do candidato usando o pré-processador do pipeline
+        # 1. Transforma o texto do candidato
         texto_transformado = preprocessor.transform(pd.DataFrame([texto_candidato], columns=['texto_completo']))
         
-        # 2. Calcula os valores SHAP para essa instância específica
+        # 2. Calcula os valores SHAP
         shap_values = explainer(texto_transformado)
         
-        # --- CORREÇÃO: Modificar o objeto SHAP diretamente ---
-        # Remove o prefixo 'tfidf__' e substitui '_' por espaço
+        # 3. Limpa os nomes das features
         shap_values.feature_names = [name.replace('tfidf__', '').replace('_', ' ') for name in shap_values.feature_names]
-        # ------------------------------------------------
-
-        # 3. Gera e exibe o gráfico de cascata com os nomes limpos
+        
+        # 4. Gera e exibe o gráfico de cascata
         st.subheader("Análise de Contribuição das Palavras-Chave")
         st.markdown("Este gráfico mostra como as principais palavras-chave (features) impactaram o score final do candidato, partindo de um score base.")
         
         fig, ax = plt.subplots(figsize=(10, 6))
         shap.plots.waterfall(shap_values[0], max_display=14, show=False)
         st.pyplot(fig, bbox_inches='tight')
-        plt.close(fig) # Fecha a figura para liberar memória
+        plt.close(fig)
+
+        # --- MELHORIA: Tradução da Pontuação ---
+        st.subheader("Tradução da Pontuação: Do Técnico ao Score Final")
+        
+        # Obter o score bruto (log-odds)
+        raw_score = shap_values[0].base_values + shap_values[0].values.sum()
+        
+        # Converter para probabilidade
+        probability = 1 / (1 + np.exp(-raw_score))
+        
+        # Converter para o score final (0-100)
+        final_score = int(probability * 100)
+
+        st.markdown(f"""
+        O gráfico acima é uma representação técnica de como o modelo chegou à sua decisão. Veja como traduzimos isso para o score que você vê:
+
+        1.  **Score Base do Modelo (`E[f(X)]`):** O ponto de partida para todo candidato é **{shap_values[0].base_values:.3f}**.
+        2.  **Impacto das Palavras-Chave:** As palavras no perfil deste candidato somaram um impacto total de **{shap_values[0].values.sum():+.3f}**.
+        3.  **Score Bruto Final (`f(x)`):** Somando o score base e o impacto, temos o score bruto de **{raw_score:.3f}**.
+        4.  **Conversão para Probabilidade:** Este score bruto é convertido para uma probabilidade de "match", resultando em **{probability:.2%}**.
+        5.  **Score Final (0-100):** Finalmente, essa probabilidade é apresentada como o **Score de {final_score}%** que você vê na lista de candidatos.
+
+        Essa análise ajuda a entender que a pontuação não é arbitrária, mas sim o resultado do impacto positivo e negativo de cada termo relevante no perfil do candidato.
+        """)
 
     except Exception as e:
         st.error(f"Ocorreu um erro ao gerar a explicação SHAP: {e}")
