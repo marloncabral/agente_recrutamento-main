@@ -7,4 +7,3 @@ matplotlib
 shap==0.48.0
 numba==0.59.1
 llvmlite==0.42.0
-ipython
