@@ -61,7 +61,7 @@ Para resolver o problema, foi desenvolvida uma aplicação web completa em Strea
 ├── 🛠️ utils.py                 # Funções de suporte (download, processamento de dados)
 ├── 🧠 modelo_recrutamento.joblib # Artefato do modelo de ML treinado
 └── 📊 shap_explainer.joblib    # Artefato do explicador SHAP treinado
----
+
 
 ## 5. Como Executar o Projeto Localmente
 
