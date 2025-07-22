@@ -2,7 +2,7 @@
 
 Projeto desenvolvido para o Datathon da Pós-Tech Data Analytics, com o objetivo de solucionar os desafios de recrutamento da empresa "Decision" utilizando uma abordagem multiagente baseada em Inteligência Artificial.
 
-**[>> Link para a Aplicação Web <<](https://insira-o-link-do-seu-app-streamlit-aqui.streamlit.app/)**
+**[>> Link para a Aplicação Web <<](https://agentedecisionapp.streamlit.app/)**
 
 ---
 
