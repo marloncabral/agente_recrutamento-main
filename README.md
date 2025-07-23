@@ -50,7 +50,7 @@ Para resolver o problema, foi desenvolvida uma aplicação web completa em Strea
 
 ## 4. Estrutura do Repositório
 
-.
+
 ├── 📄 .streamlit/config.toml  # Arquivo de configuração do Streamlit
 
 ├── 🐍 app.py                  # Código principal da aplicação Streamlit (UI e lógica dos agentes)
