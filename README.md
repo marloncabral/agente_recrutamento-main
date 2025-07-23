@@ -52,14 +52,23 @@ Para resolver o problema, foi desenvolvida uma aplicação web completa em Strea
 
 .
 ├── 📄 .streamlit/config.toml  # Arquivo de configuração do Streamlit
+
 ├── 🐍 app.py                  # Código principal da aplicação Streamlit (UI e lógica dos agentes)
+
 ├── 📦 data/                    # Diretório para os dados (criado dinamicamente)
+
 ├── 📄 packages.txt            # Dependências de sistema para o deploy
+
 ├── 📄 README.md                # Esta documentação
+
 ├── 📄 requirements.txt         # Dependências Python do projeto
+
 ├── 🤖 train.py                 # Script para treinar o modelo de ML e o explicador SHAP
+
 ├── 🛠️ utils.py                 # Funções de suporte (download, processamento de dados)
+
 ├── 🧠 modelo_recrutamento.joblib # Artefato do modelo de ML treinado
+
 └── 📊 shap_explainer.joblib    # Artefato do explicador SHAP treinado
 
 
